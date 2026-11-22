@@ -13,11 +13,18 @@ env:
 
 jobs:
   ios:
-    runs-on: macos-15
+    runs-on: macos-26
     timeout-minutes: 45
     steps:
       - name: Get the project
         uses: actions/checkout@v4
+
+      - name: Use the newest Xcode (Godot 4.7 is built with the iOS 26 SDK)
+        run: |
+          x=$(ls -d /Applications/Xcode_26*.app 2>/dev/null | sort -V | tail -1)
+          if [ -z "$x" ]; then echo "No Xcode 26 on this Mac. Installed:"; ls -d /Applications/Xcode*.app; exit 1; fi
+          sudo xcode-select -s "$x/Contents/Developer"
+          xcodebuild -version
 
       - name: Reuse Godot from an earlier run
         id: cache
