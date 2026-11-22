@@ -1,0 +1,74 @@
+# Builds the iPhone app (.ipa) on GitHub's free Mac computers.
+# Runs every time you push to the main branch, or by hand from the Actions tab ("Run workflow").
+# When it finishes, download "BlastPillar-iPhone" from the run's Artifacts and install it with Sideloadly.
+name: Build iPhone app
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+env:
+  GODOT_VERSION: "4.7.2"   # keep this the same as the Godot you use on your PC
+
+jobs:
+  ios:
+    runs-on: macos-15
+    timeout-minutes: 45
+    steps:
+      - name: Get the project
+        uses: actions/checkout@v4
+
+      - name: Reuse Godot from an earlier run
+        id: cache
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/godot
+            ~/Library/Application Support/Godot/export_templates
+          key: godot-${{ env.GODOT_VERSION }}-ios
+
+      - name: Download Godot and the iPhone export template
+        if: steps.cache.outputs.cache-hit != 'true'
+        run: |
+          set -e
+          mkdir -p ~/godot && cd ~/godot
+          base="https://github.com/godotengine/godot-builds/releases/download/${GODOT_VERSION}-stable"
+          curl -sSfL -o godot.zip "$base/Godot_v${GODOT_VERSION}-stable_macos.universal.zip"
+          unzip -q godot.zip && rm godot.zip
+          curl -sSfL -o templates.tpz "$base/Godot_v${GODOT_VERSION}-stable_export_templates.tpz"
+          dest="$HOME/Library/Application Support/Godot/export_templates/${GODOT_VERSION}.stable"
+          mkdir -p "$dest"
+          unzip -q -j templates.tpz templates/ios.zip templates/version.txt -d "$dest"
+          rm templates.tpz
+
+      - name: Import the project (models, textures, sounds)
+        run: ~/godot/Godot.app/Contents/MacOS/Godot --headless --path . --import || true
+
+      - name: Export the Xcode project
+        run: |
+          set -e
+          mkdir -p build
+          ~/godot/Godot.app/Contents/MacOS/Godot --headless --path . --export-release "iOS" build/BlastPillar.ipa
+          test -d build/BlastPillar.xcodeproj
+
+      - name: Build the app (unsigned - Sideloadly signs it with your Apple ID)
+        run: |
+          set -eo pipefail
+          xcodebuild -project build/BlastPillar.xcodeproj -scheme BlastPillar -configuration Release \
+            -sdk iphoneos -destination 'generic/platform=iOS' -derivedDataPath build/dd \
+            CODE_SIGNING_ALLOWED=NO CODE_SIGNING_REQUIRED=NO CODE_SIGN_IDENTITY="" DEVELOPMENT_TEAM="" \
+            build | tail -40
+          app=$(find build/dd/Build/Products -maxdepth 2 -name "*.app" | head -1)
+          test -n "$app"
+          mkdir -p Payload
+          cp -R "$app" Payload/
+          zip -qry BlastPillar.ipa Payload
+          ls -la BlastPillar.ipa
+
+      - name: Upload the .ipa
+        uses: actions/upload-artifact@v4
+        with:
+          name: BlastPillar-iPhone
+          path: BlastPillar.ipa
+          retention-days: 14
