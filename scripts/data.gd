@@ -23,7 +23,6 @@ const WORLDS := [
 			{"id": "ruby", "name": "Ruby", "col": "e8283c", "min": 0.75, "w": 3, "v": 80.0},
 		],
 		"treasure": {"id": "heartstone", "name": "Heartstone", "col": "ff4fa0", "v": 1000.0},
-		"auto_cost": {"coins": 80.0},
 	},
 	{
 		"id": "frozen", "name": "Frozen Peak", "depth": 150, "hard": 5.0, "value": 12.0,
@@ -42,7 +41,6 @@ const WORLDS := [
 			{"id": "aurorite", "name": "Aurorite", "col": "b46bff", "min": 0.75, "w": 3, "v": 80.0},
 		],
 		"treasure": {"id": "frozen_heart", "name": "Frozen Heart", "col": "e0fbff", "v": 1000.0},
-		"auto_cost": {"coins": 1500.0, "copper": 40},
 	},
 	{
 		"id": "desert", "name": "Sunscorch Desert", "depth": 180, "hard": 25.0, "value": 144.0,
@@ -61,7 +59,6 @@ const WORLDS := [
 			{"id": "scarab", "name": "Scarab Gem", "col": "2bd18b", "min": 0.75, "w": 3, "v": 80.0},
 		],
 		"treasure": {"id": "sun_relic", "name": "Sun Relic", "col": "fff27a", "v": 1000.0},
-		"auto_cost": {"coins": 30000.0, "sapphire": 30},
 	},
 	{
 		"id": "lava", "name": "Lava Depths", "depth": 210, "hard": 125.0, "value": 1728.0,
@@ -80,7 +77,6 @@ const WORLDS := [
 			{"id": "dragonstone", "name": "Dragonstone", "col": "b0001e", "min": 0.75, "w": 3, "v": 80.0},
 		],
 		"treasure": {"id": "phoenix_core", "name": "Phoenix Core", "col": "ffcc00", "v": 1000.0},
-		"auto_cost": {"coins": 600000.0, "topaz": 30},
 	},
 	{
 		"id": "crystal", "name": "Crystal Caves", "depth": 240, "hard": 625.0, "value": 20736.0,
@@ -99,7 +95,6 @@ const WORLDS := [
 			{"id": "voidlight", "name": "Voidlight", "col": "3b2cff", "min": 0.75, "w": 3, "v": 80.0},
 		],
 		"treasure": {"id": "crystal_heart", "name": "Crystal Heart", "col": "ff7af5", "v": 1000.0},
-		"auto_cost": {"coins": 1.2e7, "dragonstone": 20},
 	},
 	{
 		"id": "asteroid", "name": "The Asteroid", "depth": 270, "hard": 3125.0, "value": 248832.0,
@@ -118,7 +113,6 @@ const WORLDS := [
 			{"id": "nova_shard", "name": "Nova Shard", "col": "ff5de1", "min": 0.75, "w": 3, "v": 80.0},
 		],
 		"treasure": {"id": "cosmic_egg", "name": "Cosmic Egg", "col": "ffffff", "v": 1000.0},
-		"auto_cost": {"coins": 2.5e8, "prismatite": 30},
 	},
 	# ---- The Deep Realms (worlds 7-12) ---------------------------------------------------------
 	# Each one opens when you've reached the bottom of the world before it AND found the hidden
@@ -141,7 +135,6 @@ const WORLDS := [
 			{"id": "amanita_gem", "name": "Amanita Gem", "col": "ff3a3a", "min": 0.75, "w": 3, "v": 80.0},
 		],
 		"treasure": {"id": "elder_spore", "name": "Elder Spore", "col": "f0ffb0", "v": 1000.0},
-		"auto_cost": {"coins": 80.0},
 	},
 	{
 		"id": "reef", "name": "Sunken Reef", "depth": 125, "hard": 1.0, "value": 1.0, "realm": true, "needs": "freeze",
@@ -160,7 +153,6 @@ const WORLDS := [
 			{"id": "leviathan_scale", "name": "Leviathan Scale", "col": "2affb0", "min": 0.75, "w": 3, "v": 80.0},
 		],
 		"treasure": {"id": "ocean_eye", "name": "Ocean Eye", "col": "3a6aff", "v": 1000.0},
-		"auto_cost": {"coins": 80.0},
 	},
 	{
 		"id": "foundry", "name": "Clockwork Foundry", "depth": 130, "hard": 1.0, "value": 1.0, "realm": true, "needs": "sticky",
@@ -179,7 +171,6 @@ const WORLDS := [
 			{"id": "clockheart", "name": "Clockheart", "col": "ff9a2a", "min": 0.75, "w": 3, "v": 80.0},
 		],
 		"treasure": {"id": "perpetual_engine", "name": "Perpetual Engine", "col": "ffd84a", "v": 1000.0},
-		"auto_cost": {"coins": 80.0},
 	},
 	{
 		"id": "storm", "name": "Storm Spire", "depth": 135, "hard": 1.0, "value": 1.0, "realm": true, "needs": "magnet",
@@ -198,7 +189,6 @@ const WORLDS := [
 			{"id": "storm_opal", "name": "Storm Opal", "col": "b0fff0", "min": 0.75, "w": 3, "v": 80.0},
 		],
 		"treasure": {"id": "eye_of_storm", "name": "Eye of the Storm", "col": "e0f0ff", "v": 1000.0},
-		"auto_cost": {"coins": 80.0},
 	},
 	{
 		"id": "necropolis", "name": "Necropolis", "depth": 140, "hard": 1.0, "value": 1.0, "realm": true, "needs": "mirror",
@@ -217,7 +207,6 @@ const WORLDS := [
 			{"id": "lich_crystal", "name": "Lich Crystal", "col": "8a2aff", "min": 0.75, "w": 3, "v": 80.0},
 		],
 		"treasure": {"id": "phylactery", "name": "Phylactery", "col": "6affa0", "v": 1000.0},
-		"auto_cost": {"coins": 80.0},
 	},
 	{
 		"id": "starforge", "name": "The Starforge", "depth": 150, "hard": 1.0, "value": 1.0, "realm": true, "needs": "blackhole",
@@ -236,7 +225,6 @@ const WORLDS := [
 			{"id": "supernova_shard", "name": "Supernova Shard", "col": "ffb04a", "min": 0.75, "w": 3, "v": 80.0},
 		],
 		"treasure": {"id": "heart_of_star", "name": "Heart of a Star", "col": "fffae0", "v": 1000.0},
-		"auto_cost": {"coins": 80.0},
 	},
 ]
 
@@ -275,11 +263,11 @@ const ORE_SHAPES := {
 
 ## Global bomb upgrades, bought with coins.
 const UPGRADES := [
-	{"id": "radius", "name": "Blast Radius", "icon": "radius", "base": 30.0, "growth": 1.75, "max": 30},
 	{"id": "power", "name": "Bomb Power", "icon": "power", "base": 20.0, "growth": 1.7, "max": -1},
+	{"id": "value", "name": "Ore Value", "icon": "value", "base": 50.0, "growth": 1.9, "max": -1},
+	{"id": "radius", "name": "Blast Radius", "icon": "radius", "base": 30.0, "growth": 1.75, "max": 30},
 	{"id": "multi", "name": "Multi-Bomb", "icon": "multi", "base": 400.0, "growth": 4.0, "max": 5},
 	{"id": "fuse", "name": "Short Fuse", "icon": "fuse", "base": 60.0, "growth": 2.1, "max": 10},
-	{"id": "value", "name": "Ore Value", "icon": "value", "base": 50.0, "growth": 1.9, "max": -1},
 ]
 
 ## Special bombs: unlocked with ores (often from older worlds), then fired from the hotbar.
@@ -311,11 +299,11 @@ const SPECIALS := [
 ## bonuses (until you rebirth). "model" = the file in models/relics/ (two relics can share one),
 ## "col" = the shiny metal color it's painted. "keep_white": pure-white texture pixels stay white.
 const RELICS := [
-	{"id": "storm_battery", "name": "Storm Battery", "desc": "Every 20th bomb you drop is a Mega Bomb", "find": 6, "col": "e8343a", "model": "mega", "keep_white": true},
-	{"id": "pearl_of_plenty", "name": "Pearl of Plenty", "desc": "Ores are worth 2x", "find": 7, "col": "36d46a", "model": "ore"},
-	{"id": "clockwork_gear", "name": "Clockwork Gear", "desc": "Special bomb reloads are 20% shorter", "find": 8, "col": "7cc8ff", "model": "clock"},
-	{"id": "gale_lens", "name": "Gale Lens", "desc": "Every bomb reaches 1.25x farther", "find": 9, "col": "b4bac6", "model": "reach"},
-	{"id": "golden_bomb", "name": "Golden Trophy", "desc": "Every bomb does 1.5x damage", "find": 10, "col": "ffc533", "model": "mega"},
+	{"id": "storm_battery", "name": "Mega Bomb Relic", "desc": "Every 20th bomb you drop is a Mega Bomb", "find": 6, "col": "e8343a", "model": "mega", "keep_white": true},
+	{"id": "pearl_of_plenty", "name": "Ore Relic", "desc": "Ores are worth 2x", "find": 7, "col": "36d46a", "model": "ore"},
+	{"id": "clockwork_gear", "name": "Clockwork Relic", "desc": "Special bomb reloads are 20% shorter", "find": 8, "col": "7cc8ff", "model": "clock"},
+	{"id": "gale_lens", "name": "Lens Relic", "desc": "Every bomb reaches 1.25x farther", "find": 9, "col": "b4bac6", "model": "reach"},
+	{"id": "golden_bomb", "name": "Golden Relic", "desc": "Every bomb does 1.5x damage", "find": 10, "col": "ffc533", "model": "mega"},
 ]
 const RANGE_RELIC_MULT := 1.25
 const ORE_RELIC_MULT := 2.0
@@ -340,14 +328,19 @@ static func get_relic(id: String) -> Dictionary:
 const VAULT_LAYERS := 25
 ## Bedrock Bomb: one-time use, breaks the bedrock of the world you're in. Paid in Cosmic Eggs.
 const BEDROCK_BOMB_ORE := "cosmic_egg"
-## Cosmic Eggs are buried in every world's pillar: this many per world, each time you dig it (a
-## reset buries a fresh batch). They can't be bought or sold.
-const EGGS_PER_WORLD := [5, 5, 5, 10, 10, 10, 10, 10, 10, 10, 10, 10]
+## Cosmic Eggs are buried in every world's pillar. Before your first rebirth: 3 per pillar, in
+## the first pillar and the first reset only (no farming easy worlds). After a rebirth: 6, in the
+## first pillar only. Eggs you didn't dig up move into the next pillar when you reset.
+## They can't be bought or sold.
+const EGGS_PER_DIG := 3
+const EGG_DIGS := 2
+const EGGS_PER_DIG_REBORN := 6
+const EGG_DIGS_REBORN := 1
+## Every Bedrock Bomb costs this many, in any world: exactly what one world gives you.
+const BEDROCK_BOMB_COST := 6
 
-## A world's Bedrock Bomb costs what two digs of that world turn up, rounded to a tidy 5/10/20...
-static func bedrock_cost(w: int) -> int:
-	var raw := 2 * int(EGGS_PER_WORLD[clampi(w, 0, EGGS_PER_WORLD.size() - 1)])
-	return maxi(5, int(round(raw / 5.0)) * 5)
+static func bedrock_cost(_w: int) -> int:
+	return BEDROCK_BOMB_COST
 
 ## Acid bomb: how far the acid spreads (in blocks) and how long it takes.
 const ACID_RADIUS_BLOCKS := 15

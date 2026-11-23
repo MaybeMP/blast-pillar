@@ -15,7 +15,6 @@ const UIScript = preload("res://scripts/ui.gd")
 const SAVE_PATH := "user://blast_pillar_save.json"
 const MAX_BOMBS := 30
 const MAX_GEMS := 30
-const AUTO_MAX := 20
 const OFFLINE_CAP := 8.0 * 3600.0
 const IDLE_EFFICIENCY := 0.5
 const TAP_REPEAT := 0.28
@@ -68,8 +67,6 @@ var cam_focus := Vector3.ZERO
 var shake := 0.0
 var holding := false
 var hold_timer := 0.0
-var auto_accum := 0.0
-var bg_timer := 0.0
 var bg_acc := {}
 var save_timer := 0.0
 var ui_timer := 0.0
@@ -103,7 +100,7 @@ func _ready() -> void:
 	_build_scene()
 	for w in Data.WORLDS.size():
 		worlds.append(_new_world_entry())
-	var offline_seconds := load_game()
+	load_game()
 	var loading = null
 	loading_open = DisplayServer.get_name() != "headless" and not quick_restart
 	quick_restart = false
@@ -125,8 +122,6 @@ func _ready() -> void:
 	_render_spin_icons()   # runs in the background; icons start spinning as they're ready
 	ui.hint_label.visible = total_coins == 0.0
 	ui.refresh()
-	if offline_seconds > 0.0:
-		grant_offline(offline_seconds)
 	if just_reborn:
 		just_reborn = false
 		_reborn_popup()
@@ -216,11 +211,16 @@ func _load_world(w: int) -> void:
 	var entry: Dictionary = worlds[w]
 	var st: Dictionary = entry.get("state", {})
 	if st.is_empty() or not pillar.load_state(w, st, int(entry["seed"])):
+		# a brand new pillar: bury this dig's Cosmic Eggs, plus any left over from the last one
+		var fresh := egg_allotment(w)
+		if fresh > 0:
+			entry["egg_digs"] = int(entry.get("egg_digs", 0)) + 1
+		pillar.eggs_to_bury = fresh + int(entry.get("egg_carry", 0))
+		entry["egg_carry"] = 0
 		pillar.generate(w, int(entry["seed"]))
 	pillar.rebuild_all()
 	portal_open = pillar.reached_bedrock()
 	_update_portal()
-	auto_accum = 0.0
 	var world: Dictionary = Data.WORLDS[w]
 	var grad := Gradient.new()
 	grad.set_color(0, Color.html(world["sky_top"]))
@@ -242,6 +242,7 @@ func _load_world(w: int) -> void:
 func travel(w: int) -> void:
 	if w == current_world or w >= unlocked_worlds:
 		return
+	_restore_gold()
 	worlds[current_world]["state"] = pillar.get_state()
 	worlds[current_world]["depth"] = pillar.floor_depth()
 	_refund_falling_bedrock_bombs()
@@ -259,10 +260,31 @@ func _refund_falling_bedrock_bombs() -> void:
 			ores[Data.BEDROCK_BOMB_ORE] = int(ores.get(Data.BEDROCK_BOMB_ORE, 0)) + Data.bedrock_cost(current_world)
 
 
+## Cosmic Eggs the next new pillar of world w gets (0 once its egg digs are used up).
+func egg_allotment(w: int) -> int:
+	var digs := int(worlds[w].get("egg_digs", 0))
+	if rebirths == 0:
+		return Data.EGGS_PER_DIG if digs < Data.EGG_DIGS else 0
+	return Data.EGGS_PER_DIG_REBORN if digs < Data.EGG_DIGS_REBORN else 0
+
+
+## Cosmic Eggs still buried in world w's current pillar.
+func eggs_left_in(w: int) -> int:
+	if w == current_world:
+		return pillar.count_eggs()
+	var st: Dictionary = worlds[w].get("state", {})
+	if st.is_empty():
+		return 0
+	return pillar.count_eggs_in_state(w, st)
+
+
 ## Regrow a fresh pillar in a world you've already broken through.
 func reset_world(w: int) -> void:
 	if not worlds[w].get("done", false):
 		return
+	_restore_gold()
+	# eggs you never dug up aren't lost: they're buried again in the new pillar
+	worlds[w]["egg_carry"] = int(worlds[w].get("egg_carry", 0)) + eggs_left_in(w)
 	worlds[w]["seed"] = randi()
 	worlds[w]["state"] = {}
 	worlds[w]["depth"] = 0.0
@@ -286,8 +308,8 @@ func _update_portal() -> void:
 	if portal_node:
 		portal_node.queue_free()
 		portal_node = null
-	if not portal_open:
-		return
+	if not portal_open or current_world >= Data.WORLDS.size() - 1:
+		return   # the last world's bottom leads nowhere, so it has no portal
 	portal_node = Node3D.new()
 	add_child(portal_node)
 	var back: float = -pillar.half_width()
@@ -452,8 +474,10 @@ func world_depth(w: int) -> float:
 
 
 func _check_progress() -> void:
-	if pillar.update_cut():
-		pass
+	if pillar.update_cut() and not pillar.cut_eggs.is_empty():
+		var got: Array = pillar.cut_eggs
+		pillar.cut_eggs = []
+		_collect(got, got[0][1], false)
 	if not portal_open and pillar.reached_bedrock():
 		portal_open = true
 		_update_portal()
@@ -466,11 +490,9 @@ func _check_progress() -> void:
 		var w := current_world
 		_try_unlock()
 		if w + 1 < Data.WORLDS.size() and unlocked_worlds <= w + 1:
-			# the next world is a realm whose door needs a hidden bomb you don't have yet
-			var need := world_needs(w + 1)
-			var home := special_home(need)
+			# the next world is a Deep Realm: its door needs every vault bomb from Worlds 1-6
 			ui.notify("YOU HIT BEDROCK!",
-				"The portal to [color=#ffcf5a]%s[/color] is sealed. Find the [color=#b46bff]%s[/color] under the bedrock of %s to open it." % [Data.WORLDS[w + 1]["name"], special_name(need), Data.WORLDS[home]["name"]],
+				"The portal to [color=#ffcf5a]%s[/color] is sealed. Find all [color=#b46bff]%d vault bombs[/color] under the bedrock of Worlds 1-6 to open it ([color=#ffcf5a]%d/%d[/color] found)." % [Data.WORLDS[w + 1]["name"], vault_bombs_total(), vault_bombs_found(), vault_bombs_total()],
 				ui.world_icon(w, 3), ["world", str(w)], Callable(), 7.0)
 		elif w + 1 < Data.WORLDS.size():
 			var next_name: String = Data.WORLDS[w + 1]["name"]
@@ -528,8 +550,6 @@ func fuse_time() -> float:
 func value_mult() -> float:
 	return pow(1.2, lvl("value"))
 
-func auto_rate(w: int) -> float:
-	return 0.25 * int(worlds[w]["auto"])
 
 ## Rebirth coin boost: x2 after 1 rebirth, x3 after 2, x4 after 3... in every world.
 func rebirth_coin_mult() -> float:
@@ -603,6 +623,34 @@ func special_home(id: String) -> int:
 			return int(sp.get("find", -1))
 	return -1
 
+## Has this world's vault prize been found? (its hidden bomb, its relic, or the Star Core)
+func world_prize_found(w: int) -> bool:
+	if w == Data.STAR_CORE_WORLD:
+		return rebirth_ready
+	for sp in Data.SPECIALS:
+		if int(sp.get("find", -1)) == w:
+			return specials.has(sp["id"])
+	for rl in Data.RELICS:
+		if int(rl["find"]) == w:
+			return relics.has(rl["id"])
+	return false
+
+
+## The hidden bombs from the vaults of Worlds 1-6: you need all of them to enter the Deep Realms.
+func vault_bombs_total() -> int:
+	var n := 0
+	for sp in Data.SPECIALS:
+		if sp.has("find") and int(sp["find"]) < Data.ORIGINAL_WORLDS:
+			n += 1
+	return n
+
+func vault_bombs_found() -> int:
+	var n := 0
+	for sp in Data.SPECIALS:
+		if sp.has("find") and int(sp["find"]) < Data.ORIGINAL_WORLDS and specials.has(sp["id"]):
+			n += 1
+	return n
+
 ## Open every world whose door is ready: the world before it is done and its bomb is found.
 ## Returns the worlds that just opened.
 func _try_unlock() -> Array:
@@ -614,10 +662,14 @@ func _try_unlock() -> Array:
 		var need := world_needs(nxt)
 		if need != "" and not specials.has(need):
 			break
+		if nxt >= Data.ORIGINAL_WORLDS and vault_bombs_found() < vault_bombs_total():
+			break
 		unlocked_worlds += 1
 		opened.append(nxt)
 	if not opened.is_empty() and portal_node:
 		_update_portal()   # this world's portal may have just been unlocked
+	if not opened.is_empty() and ui:
+		ui.rebuild_tab()   # the WORLDS tab shows one more world now
 	return opened
 
 func upgrade_effect(id: String) -> String:
@@ -640,17 +692,6 @@ func upgrade_cost(u: Dictionary) -> float:
 
 func upgrade_maxed(u: Dictionary) -> bool:
 	return int(u["max"]) >= 0 and lvl(u["id"]) >= int(u["max"])
-
-func auto_cost(w: int) -> Dictionary:
-	var base: Dictionary = Data.WORLDS[w]["auto_cost"]
-	var l := int(worlds[w]["auto"])
-	if l == 0:
-		if coin_scale(w) == 1.0:
-			return base
-		var scaled := base.duplicate()
-		scaled["coins"] = float(base["coins"]) * coin_scale(w)
-		return scaled
-	return {"coins": float(base["coins"]) * coin_scale(w) * pow(1.75, l)}
 
 func can_afford(cost: Dictionary) -> bool:
 	for k in cost:
@@ -684,20 +725,6 @@ func buy_upgrade(id: String) -> void:
 	coins -= upgrade_cost(u)
 	levels[id] = lvl(id) + 1
 	sfx.play("buy")
-	_vibrate(15)
-	ui.refresh()
-
-func buy_auto() -> void:
-	var w := current_world
-	if int(worlds[w]["auto"]) >= AUTO_MAX:
-		return
-	var cost := auto_cost(w)
-	if not can_afford(cost):
-		sfx.play("error")
-		return
-	_pay(cost)
-	worlds[w]["auto"] = int(worlds[w]["auto"]) + 1
-	sfx.play("unlock" if int(worlds[w]["auto"]) == 1 else "buy")
 	_vibrate(15)
 	ui.refresh()
 
@@ -798,62 +825,55 @@ func fire_special(id: String) -> void:
 	sfx.play("drop", 0.8)
 	ui.refresh()
 
-## Buy/sell ores one at a time. Both use the same price: what the ore earns when you mine it.
+## Buy ores one at a time, for what the ore earns when you mine it. (Ores can't be sold: you keep
+## them through rebirths, and selling your best ones would be a quick cash-out at the start of a run.)
 ## Cosmic Eggs are dug up, never bought or sold.
 func ore_tradable(oid: String) -> bool:
 	return oid != Data.BEDROCK_BOMB_ORE
 
 
-## Dug up Cosmic Egg(s) (already added to your ores): a flash, fireworks where it was, chimes, a
-## buzz, and a glowing notification saying how close you are to the next Bedrock Bomb.
+## Dug up Cosmic Egg(s) (already added to your ores): a little sparkle, a chime, and a small
+## pastel notification saying how close you are to the next Bedrock Bomb.
 func _eggs_found(n: int, where: Vector3) -> void:
 	var eid: String = Data.BEDROCK_BOMB_ORE
 	stat("eggs", n)
 	var have := int(ores.get(eid, 0))
 	var egg_col: Color = ore_table[eid]["color"]
-	ui.flash(Color(egg_col.r, egg_col.g, egg_col.b, 0.4), 0.5)
-	fx.explosion(where, 1.6, egg_col)
-	fx.explosion(where, 1.0, Color(1.0, 0.85, 0.3))
-	fx.shockwave(where, 2.5, [egg_col, Color(1.0, 0.9, 0.5), Color.WHITE])
-	shake = maxf(shake, 0.35)
-	_vibrate(90)
-	sfx.play("unlock", 1.2, 0.0)
-	sfx.play("gem_rare", 0.8, 0.0)
-	var body := "You have [color=#ffcf5a]%d[/color]. " % have
+	fx.explosion(where, 0.6, Color(0.95, 0.9, 1.0))
+	_vibrate(30)
+	sfx.play("gem_rare", 1.1, -4.0)
+	var body := "You have [color=#fff1c9]%d[/color]." % have
 	var nb := next_bedrock_world()
 	if nb >= 0:
 		var cost := Data.bedrock_cost(nb)
 		if have >= cost:
-			body += "That's enough to break the bedrock of [color=#ffcf5a]%s[/color]! [color=#9be36b]Tap to open BOMBS.[/color]" % Data.WORLDS[nb]["name"]
+			body += "\nEnough for a Bedrock Bomb! [color=#c8f5b0]Tap to open BOMBS.[/color]"
 		else:
-			body += "[color=#ffcf5a]%d[/color] more to break the bedrock of %s." % [cost - have, Data.WORLDS[nb]["name"]]
-	ui.notify("COSMIC EGG!" if n == 1 else "%d COSMIC EGGS!" % n, body, ui.micon("ores", eid, "gem", 4, egg_col), ["ores", eid],
-		func(): ui.switch_tab("bombs"), 6.0, true)
+			body += "\n%d more needed for Bedrock Bomb." % (cost - have)
+	ui.notify("Cosmic Egg" if n == 1 else "%d Cosmic Eggs" % n, body, ui.micon("ores", eid, "gem", 2, egg_col), ["ores", eid],
+		func(): ui.switch_tab("bombs"), 4.0, false, true)
 	save_game()
 
 
-func buy_ore(oid: String) -> void:
-	if not ore_tradable(oid):
-		sfx.play("error")
-		return
+## How many of an ore your coins can buy right now (capped so the count stays a sane number).
+func ores_affordable(oid: String) -> int:
 	var price := ore_value(oid)
-	if coins < price:
+	if price <= 0.0 or not ore_tradable(oid):
+		return 0
+	return int(minf(floorf(coins / price), 1.0e12))
+
+
+## Buy `count` of an ore (fewer if you can't afford them all). Returns how many you got.
+func buy_ore(oid: String, count := 1) -> int:
+	var n := mini(count, ores_affordable(oid))
+	if n <= 0:
 		sfx.play("error")
-		return
-	coins -= price
-	ores[oid] = int(ores.get(oid, 0)) + 1
+		return 0
+	coins -= ore_value(oid) * n
+	ores[oid] = int(ores.get(oid, 0)) + n
 	sfx.play("gem", 1.1, -4.0, 0.02)
 	ui.refresh()
-
-
-func sell_ore(oid: String) -> void:
-	if int(ores.get(oid, 0)) <= 0 or not ore_tradable(oid):
-		sfx.play("error")
-		return
-	ores[oid] = int(ores[oid]) - 1
-	coins += ore_value(oid)
-	sfx.play("click", 0.9)
-	ui.refresh()
+	return n
 
 
 func set_sound(on: bool) -> void:
@@ -907,7 +927,8 @@ func _spawn_point(spread: float) -> Vector3:
 
 
 func _spawn_bomb(kind: String, pos: Vector3, vel := Vector3(0, -3, 0), lit := -1.0) -> void:
-	if bombs_node.get_child_count() >= MAX_BOMBS + 10:
+	# too many bombs around: skip ordinary bombs, but never a special one you've paid for
+	if bombs_node.get_child_count() >= MAX_BOMBS + 10 and kind in ["bomb", "mini"]:
 		return
 	if kind == "bomb" and has_relic("storm_battery"):
 		# Storm Battery: every Nth normal bomb drops as a Mega Bomb (looks and blasts like one)
@@ -1241,6 +1262,15 @@ const GOLD_LAYERS := 5
 const GOLD_BONUS := 0.1
 const GOLD_SHOW := 1.0      # seconds the gold stays before it cashes in
 
+## Blocks the Golden Bomb is showing as gold right now (they turn back if you leave first).
+var gold_pending: Array = []
+
+func _restore_gold() -> void:
+	for c in gold_pending:
+		pillar.types[c[0]] = c[1]
+	gold_pending = []
+
+
 func _golden(pos: Vector3) -> void:
 	var token := world_token
 	var mid: int = pillar.layer_at(pos)
@@ -1248,7 +1278,11 @@ func _golden(pos: Vector3) -> void:
 	fx.explosion(pos, 1.2, Color(1.0, 0.85, 0.3))
 	if cells.is_empty():
 		return
-	pillar.paint_cells(cells, blocks.index_of("gold_block"))
+	# ores (and Cosmic Eggs) stay as they are, glinting in the gold, so another bomb going off
+	# during the show can't turn them into plain gold and lose them
+	var rock: Array = cells.filter(func(c): return blocks.defs[int(c[1])]["ore"] == "")
+	pillar.paint_cells(rock, blocks.index_of("gold_block"))
+	gold_pending = rock
 	fx.shockwave(pos, 5.0, [Color(1.0, 0.95, 0.6), Color(1.0, 0.82, 0.25), Color.WHITE])
 	ui.flash(Color(1.0, 0.85, 0.3, 0.35), 0.6)
 	sfx.play("unlock", 0.8, 3.0, 0.05)
@@ -1258,6 +1292,7 @@ func _golden(pos: Vector3) -> void:
 	if token != world_token or not is_inside_tree():
 		return
 	var bonus := coins * GOLD_BONUS
+	gold_pending = []
 	var res: Dictionary = pillar.break_cells(cells)
 	# glittering gold chunks fly off as it all breaks
 	for i in mini(70, res["broken"].size()):
@@ -1455,6 +1490,10 @@ func _flat_mat(c: Color, metal: float) -> StandardMaterial3D:
 ## wide as the pillar slams into the top and breaks the top half of what's left.
 const MOON_WAIT := 2.0
 const MOON_RED := 0.5       # how red the screen gets just before the moon hits
+const MOON_START_UP := 24.0  # how high above its landing spot the moon first appears
+const MOON_CREEP_TO := 12.0  # where it has slowly sunk to by the end of the whistle
+const MOON_CAM_ZOOM := 2.3   # how far the camera pulls back to show it coming
+const MOON_DROP := 0.6       # then the last plunge into the pillar (seconds)
 
 func _moon_strike() -> void:
 	var token := world_token
@@ -1462,11 +1501,9 @@ func _moon_strike() -> void:
 	# the sky burns redder and redder as the moon comes down
 	var red: ColorRect = ui.screen_tint(Color(1.0, 0.18, 0.06))
 	var glow := red.create_tween()
-	glow.tween_property(red, "color:a", MOON_RED, MOON_WAIT + 0.4).set_trans(Tween.TRANS_QUAD).set_ease(Tween.EASE_IN)
-	await get_tree().create_timer(MOON_WAIT).timeout
-	if token != world_token or not is_inside_tree():
-		red.queue_free()
-		return
+	glow.tween_property(red, "color:a", MOON_RED, MOON_WAIT + MOON_DROP).set_trans(Tween.TRANS_QUAD).set_ease(Tween.EASE_IN)
+	# the moon shows up right away, huge at the top of the sky, creeps down through the whistle,
+	# then speeds up for the last moment before it hits
 	var top: int = mini(pillar.highest_layer(), pillar.depth)
 	var surface := -top * Data.VOXEL
 	var size: float = pillar.half_width() * 4.0     # twice the pillar's width
@@ -1476,14 +1513,23 @@ func _moon_strike() -> void:
 	else:
 		moon = _plain_moon(size)
 	var land := Vector3(0, surface + size * 0.35, 0)
-	moon.position = land + Vector3(0, 40.0, 0)
+	moon.position = land + Vector3(0, MOON_START_UP, 0)
 	add_child(moon)
 	cam_hold_y = surface - 1.0
+	cam_zoom_target = MOON_CAM_ZOOM   # pull back so you can watch it come down
 	var tw := moon.create_tween()
-	tw.set_parallel(true)
-	tw.tween_property(moon, "position", land, 0.4).set_trans(Tween.TRANS_QUAD).set_ease(Tween.EASE_IN)
-	tw.tween_property(moon, "rotation", Vector3(0.6, 1.2, 0.3), 0.4)
-	await tw.finished
+	tw.tween_property(moon, "position", land + Vector3(0, MOON_CREEP_TO, 0), MOON_WAIT).set_trans(Tween.TRANS_SINE).set_ease(Tween.EASE_IN_OUT)
+	tw.parallel().tween_property(moon, "rotation", Vector3(0.3, 0.8, 0.15), MOON_WAIT)
+	tw.tween_property(moon, "position", land, MOON_DROP).set_trans(Tween.TRANS_QUAD).set_ease(Tween.EASE_IN)
+	tw.parallel().tween_property(moon, "rotation", Vector3(0.6, 1.2, 0.3), MOON_DROP)
+	while tw.is_running():
+		await get_tree().process_frame
+		if token != world_token or not is_inside_tree():
+			tw.kill()   # you left the world mid-fall: the moon goes away
+			red.queue_free()
+			moon.queue_free()
+			cam_zoom_target = 1.0
+			return
 	glow.kill()
 	var fade := red.create_tween()
 	fade.tween_property(red, "color:a", 0.0, 1.6).set_ease(Tween.EASE_OUT)
@@ -1513,6 +1559,7 @@ func _moon_strike() -> void:
 	gone.tween_property(moon, "scale", Vector3.ONE * 0.01, 0.35).set_trans(Tween.TRANS_BACK).set_ease(Tween.EASE_IN)
 	gone.tween_callback(moon.queue_free)
 	await get_tree().create_timer(1.4).timeout
+	cam_zoom_target = 1.0
 	if token == world_token:
 		cam_hold_y = INF
 
@@ -1613,7 +1660,9 @@ func bedrock_bomb_state() -> String:
 	for b in bombs_node.get_children():
 		if b.get("kind") == "bedrock" and not b.get("exploded"):
 			return "falling"   # one's already on its way - don't pay for a second
-	if next_bedrock_world() != current_world and not bool(worlds[current_world].get("bedrock_done", false)):
+	if bool(worlds[current_world].get("bedrock_done", false)):
+		return "done_before"   # broken once already (this pillar was reset) - eggs are too precious
+	if next_bedrock_world() != current_world:
 		return "out_of_order"
 	if not pillar.reached_bedrock():
 		return "not_reached"
@@ -1694,9 +1743,12 @@ func _open_cache(w: int) -> void:
 			var body := "%s. It's in your hotbar now." % sp["desc"]
 			for ow in _try_unlock():
 				body += "\n[color=#ffcf5a]%s[/color] has opened!" % Data.WORLDS[ow]["name"]
-			for rw in range(Data.ORIGINAL_WORLDS, Data.WORLDS.size()):
-				if world_needs(rw) == sp["id"] and rw >= unlocked_worlds:
-					body += "\nIt opens [color=#ffcf5a]%s[/color] once you reach the bottom of %s." % [Data.WORLDS[rw]["name"], Data.WORLDS[rw - 1]["name"]]
+			if int(sp["find"]) < Data.ORIGINAL_WORLDS and unlocked_worlds <= Data.ORIGINAL_WORLDS:
+				var got := vault_bombs_found()
+				if got < vault_bombs_total():
+					body += "\nVault bombs: [color=#ffcf5a]%d/%d[/color]. Find them all to open the Deep Realms." % [got, vault_bombs_total()]
+				elif not bool(worlds[Data.ORIGINAL_WORLDS - 1].get("done", false)):
+					body += "\nThat's every vault bomb! Reach the bottom of %s to open the Deep Realms." % Data.WORLDS[Data.ORIGINAL_WORLDS - 1]["name"]
 			ui.notify("YOU FOUND THE %s!" % sp["name"].to_upper(), body,
 				ui.micon("bombs", sp["id"], sp["id"], 3), ["bombs", sp["id"]], Callable(), 7.0)
 			ui.rebuild_hotbar()
@@ -2222,6 +2274,9 @@ func _render_icons() -> void:
 			jobs.append(["relics", r["id"]])
 	for w in Data.WORLDS.size():
 		jobs.append(["world", str(w)])
+	for id in ["coin"]:   # menu icons (the UPGRADES tab's spinning coin)
+		if has_model("ui", id):
+			jobs.append(["ui", id])
 	var vp := SubViewport.new()
 	vp.size = Vector2i(ICON_RES, ICON_RES)
 	vp.transparent_bg = true
@@ -2759,27 +2814,10 @@ func _process(delta: float) -> void:
 			hold_timer = TAP_REPEAT
 			_tap_drop()
 
-	# auto-bomber in this world drops real bombs (and stops once there's nothing left to blast)
 	empty_timer -= delta
 	if empty_timer <= 0.0:
 		empty_timer = 1.0
 		worlds[current_world]["empty"] = not pillar.blocks_left()
-	var rate := auto_rate(current_world)
-	if rate > 0.0 and not world_empty(current_world):
-		auto_accum += rate * delta
-		while auto_accum >= 1.0:
-			auto_accum -= 1.0
-			if bombs_node.get_child_count() < MAX_BOMBS:
-				_spawn_bomb("bomb", _spawn_point(1.0))
-				stat("auto_bombs")
-
-	# auto-bombers in other worlds earn from their averages
-	bg_timer += delta
-	if bg_timer >= 1.0:
-		bg_timer -= 1.0
-		for w in unlocked_worlds:
-			if w != current_world and int(worlds[w]["auto"]) > 0 and not world_empty(w):
-				_idle_income(w, auto_rate(w) * IDLE_EFFICIENCY)
 
 	for id in cooldowns.keys():
 		cooldowns[id] = maxf(0.0, float(cooldowns[id]) - delta)
@@ -2808,26 +2846,6 @@ func world_empty(w: int) -> bool:
 	return bool(worlds[w].get("empty", false))
 
 
-## Gives the coins/ores a world's auto-bomber would make for `bombs` bombs. Returns what was given.
-func _idle_income(w: int, bombs: float) -> Dictionary:
-	var e: Dictionary = worlds[w]
-	var c := float(e["ema_coins"]) * bombs
-	add_coins(c)
-	if not bg_acc.has(w):
-		bg_acc[w] = {}
-	var acc: Dictionary = bg_acc[w]
-	var got := {}
-	var eo: Dictionary = e["ema_ores"]
-	for k in eo:
-		acc[k] = float(acc.get(k, 0.0)) + float(eo[k]) * bombs
-		var whole := int(floor(acc[k]))
-		if whole > 0:
-			acc[k] -= whole
-			ores[k] = int(ores.get(k, 0)) + whole
-			ores_seen[k] = true
-			got[k] = whole
-	return {"coins": c, "ores": got}
-
 
 ## Something worth watching (like a black hole) can hold the camera on itself for a moment.
 var cam_hold_y := INF
@@ -2838,10 +2856,15 @@ func _focus_target() -> Vector3:
 	return Vector3(0, pillar.top_y() - 1.5, 0)
 
 
+## The camera can pull back for a big moment (the Moon Bomb), then glides back in.
+var cam_zoom := 1.0
+var cam_zoom_target := 1.0
+
 func _update_camera(delta: float, snap: bool) -> void:
 	var target := _focus_target()
 	cam_focus = target if snap else cam_focus.lerp(target, clampf(delta * 3.0, 0.0, 1.0))
-	var offset := Vector3(7.2, 8.6, 10.4)
+	cam_zoom = cam_zoom_target if snap else lerpf(cam_zoom, cam_zoom_target, clampf(delta * 2.0, 0.0, 1.0))
+	var offset := Vector3(7.2, 8.6, 10.4) * cam_zoom
 	var shake_off := Vector3.ZERO
 	if reduce_flash:
 		shake = 0.0
@@ -2861,31 +2884,6 @@ func _vibrate(ms: int) -> void:
 # Offline income, saving, loading
 # =============================================================================================
 
-func grant_offline(seconds: float) -> void:
-	if seconds < 60.0:
-		return
-	seconds = minf(seconds, OFFLINE_CAP)
-	var total_c := 0.0
-	var total_o := {}
-	for w in unlocked_worlds:
-		if int(worlds[w]["auto"]) <= 0 or world_empty(w):
-			continue
-		var r := _idle_income(w, auto_rate(w) * IDLE_EFFICIENCY * seconds)
-		total_c += float(r["coins"])
-		for k in r["ores"]:
-			total_o[k] = int(total_o.get(k, 0)) + int(r["ores"][k])
-	if total_c <= 0.0 and total_o.is_empty():
-		return
-	var lines := "Gone %s. Your auto-bombers found [color=#ffcf5a]%s coins[/color]" % [_duration(seconds), fmt(total_c)]
-	var sorted_ores := total_o.keys()
-	sorted_ores.sort_custom(func(a, b): return ore_table[a]["value"] > ore_table[b]["value"])
-	for i in mini(3, sorted_ores.size()):
-		var k: String = sorted_ores[i]
-		lines += ", %s %s" % [fmt(float(total_o[k])), ore_table[k]["name"]]
-	ui.notify("WELCOME BACK", lines + ".", ui.icon("auto", 3), [], Callable(), 8.0)
-	sfx.play("gem_rare")
-
-
 func _duration(sec: float) -> String:
 	var s := int(sec)
 	if s >= 3600:
@@ -2899,8 +2897,6 @@ func _notification(what: int) -> void:
 			save_game()
 			pause_unix = Time.get_unix_time_from_system()
 		NOTIFICATION_APPLICATION_RESUMED:
-			if pause_unix > 0.0 and ui:
-				grant_offline(Time.get_unix_time_from_system() - pause_unix)
 			pause_unix = 0.0
 		NOTIFICATION_APPLICATION_FOCUS_OUT, NOTIFICATION_WM_CLOSE_REQUEST:
 			save_game()
@@ -2962,13 +2958,12 @@ func stat(key: String, n := 1.0) -> void:
 const HINTS := {
 	"start": ["WELCOME TO BLAST PILLAR!", "Tap anywhere to drop bombs. Hold your finger down to keep dropping them."],
 	"first_upgrade": ["BUY UPGRADES", "You can afford an upgrade! Open the [color=#ffcf5a]UPGRADES[/color] tab below to make your bombs stronger."],
-	"auto": ["AUTO-BOMBERS", "Auto-Bombers drop bombs for you - even while the game is closed. Buy them in [color=#ffcf5a]UPGRADES[/color]."],
 	"ores": ["ORES", "Ores pay out coins as you dig them. The [color=#ffcf5a]ORES[/color] tab shows every ore you've found."],
 	"special": ["SPECIAL BOMBS", "Special bombs live in the bar above the menu. Tap one to fire it - then it reloads."],
 	"special_used": ["RELOADING", "Special bombs reload over time. Upgrade their reload in the [color=#ffcf5a]BOMBS[/color] tab."],
 	"portal": ["THE PORTAL", "Clear the pillar down to the bedrock to open the portal to the next world. Switch worlds any time in [color=#ffcf5a]WORLDS[/color]."],
 	"bedrock": ["BEDROCK", "Something is hidden under every world's bedrock. A [color=#b46bff]Bedrock Bomb[/color] (BOMBS tab) breaks it - it costs Cosmic Eggs, which are buried in every world."],
-	"egg": ["COSMIC EGGS", "Use your egg on a Bedrock Bomb in the [color=#ffcf5a]BOMBS[/color] tab. Bedrock goes in order, starting with Grasslands."],
+	"egg": ["COSMIC EGGS", "Every world hides a few. [color=#ffcf5a]6[/color] buy a Bedrock Bomb in the [color=#ffcf5a]BOMBS[/color] tab. Bedrock goes in order, starting with Grasslands."],
 	"vault": ["THE VAULT", "Dig to the very bottom of the vault - there's a prize waiting in the crate."],
 }
 var hint_timer := 0.0
@@ -2993,8 +2988,6 @@ func _check_hints(delta: float) -> void:
 		if not upgrade_maxed(u) and coins >= upgrade_cost(u):
 			hint("first_upgrade")
 			break
-	if hints_seen.has("first_upgrade") and can_afford(auto_cost(current_world)) and int(worlds[current_world]["auto"]) == 0:
-		hint("auto")
 	if float(stats.get("ores", 0.0)) >= 5.0:
 		hint("ores")
 	for id in specials:
@@ -3101,7 +3094,6 @@ func cheat_max_out() -> void:
 	for w in Data.WORLDS.size():
 		worlds[w]["done"] = true
 		worlds[w]["bedrock_done"] = true
-		worlds[w]["auto"] = AUTO_MAX
 	for sp in Data.SPECIALS:
 		specials[sp["id"]] = Data.SPECIAL_MAX_LEVEL
 		cooldowns[sp["id"]] = 0.0
@@ -3122,7 +3114,6 @@ func cheat_upgrades() -> void:
 		if int(u["max"]) >= 0:
 			l = mini(l, int(u["max"]))
 		levels[u["id"]] = l
-	worlds[current_world]["auto"] = mini(int(worlds[current_world]["auto"]) + 5, AUTO_MAX)
 	for id in specials:
 		specials[id] = mini(int(specials[id]) + 5, Data.SPECIAL_MAX_LEVEL)
 	sfx.play("unlock")
@@ -3151,7 +3142,7 @@ func show_rebirth_popup() -> void:
 	var body := "Rebirths: [color=#ffcf5a]%d[/color]   Damage: [color=#ffcf5a]x%s[/color]   Coins: [color=#ffcf5a]x%d[/color]\n\n" % [rebirths, fmt(rebirth_mult()), int(rebirth_coin_mult())]
 	var buttons: Array
 	if rebirth_ready:
-		body += "Start over from Grasslands with [color=#ffcf5a]x%s damage[/color] in Worlds 1-6 (the Deep Realms ignore it) and [color=#ffcf5a]x%d coins[/color] everywhere, for good.\n\nEverything resets - coins, ores, upgrades, worlds, relics and vault bombs. You keep your rebirths and rebirth bombs." % [fmt(Data.REBIRTH_MULT * next), next + 1]
+		body += "Start over from Grasslands with [color=#ffcf5a]x%s damage[/color] in Worlds 1-6 (the Deep Realms ignore it) and [color=#ffcf5a]x%d coins[/color] everywhere, for good.\n\nCoins, upgrades, worlds, relics and vault bombs reset.\n[color=#9be36b]You KEEP all your ores[/color], your rebirths and your rebirth bombs." % [fmt(Data.REBIRTH_MULT * next), next + 1]
 		buttons = [["CANCEL", Callable(), "gold"], ["REBIRTH", func(): do_rebirth(), "red"]]
 	else:
 		body += "Break the Star Core at the bottom of %s's vault to rebirth again." % Data.WORLDS[Data.STAR_CORE_WORLD]["name"]
@@ -3173,6 +3164,7 @@ func do_rebirth() -> void:
 		"version": 1, "rebirths": rebirths + 1, "specials": keep, "just_reborn": true,
 		"sound_on": sound_on, "vibrate_on": vibrate_on, "reduce_flash": reduce_flash,
 		"stats": stats, "hints_seen": hints_seen, "time": Time.get_unix_time_from_system(),
+		"ores": ores, "ores_seen": ores_seen,   # ores (and what you've found) are KEPT
 	}
 	var f := FileAccess.open(SAVE_PATH, FileAccess.WRITE)
 	if f:
@@ -3182,7 +3174,7 @@ func do_rebirth() -> void:
 
 
 func _reborn_popup() -> void:
-	var body := "Damage is now [color=#ffcf5a]x%s[/color] in Worlds 1-6, and coins [color=#ffcf5a]x%d[/color] everywhere. Blast your way down again!" % [fmt(rebirth_mult()), int(rebirth_coin_mult())]
+	var body := "Damage is now [color=#ffcf5a]x%s[/color] in Worlds 1-6, and coins [color=#ffcf5a]x%d[/color] everywhere. [color=#9be36b]All your ores came with you![/color] Blast your way down again!" % [fmt(rebirth_mult()), int(rebirth_coin_mult())]
 	var spin: Array = []
 	var tex: Texture2D = ui.icon("rebirth", 3)
 	if not new_rebirth_bombs.is_empty():
@@ -3268,6 +3260,8 @@ func load_game() -> float:
 			e["depth"] = float(src.get("depth", 0.0))
 			e["ema_coins"] = float(src.get("ema_coins", 0.0))
 			e["ema_ores"] = src.get("ema_ores", {}) if typeof(src.get("ema_ores")) == TYPE_DICTIONARY else {}
+			e["egg_digs"] = int(src.get("egg_digs", 0))
+			e["egg_carry"] = int(src.get("egg_carry", 0))
 			if bool(src.get("bedrock_broken", false)):
 				e["bedrock_broken"] = true
 			if bool(src.get("bedrock_done", false)) or bool(src.get("bedrock_broken", false)):

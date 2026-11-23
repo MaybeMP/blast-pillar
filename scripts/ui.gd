@@ -120,6 +120,8 @@ func _make_styles() -> void:
 	st["tab_on"] = PA.frame(Color("5a4d41"), Color("7a6a5a"), Color("3d342c"), 2, false, Vector4(px(6), px(8), px(6), px(10)))
 	st["tab_off"] = PA.frame(Color("2a231d"), Color("3a312a"), Color("1a1512"), 2, false, Vector4(px(6), px(8), px(6), px(10)))
 	st["note_epic"] = PA.frame(Color(0.2, 0.08, 0.3, 0.97), Color(1.0, 0.82, 0.35, 1.0), Color(0.45, 0.2, 0.6, 1.0), 3, false, Vector4(px(14), px(10), px(16), px(11)))
+	# soft pastel lavender, for small happy finds (Cosmic Eggs)
+	st["note_soft"] = PA.frame(Color("8e7cc3"), Color("c9bcf0"), Color("5f4f93"), 3, false, Vector4(px(12), px(8), px(14), px(9)))
 	st["note"] = PA.frame(Color(0.13, 0.1, 0.08, 0.95), Color(0.36, 0.3, 0.22, 0.95), Color(0.05, 0.04, 0.03, 0.95), 3, false, Vector4(px(12), px(8), px(14), px(9)))
 	st["toast"] = PA.frame(Color(0.1, 0.08, 0.06, 0.88), Color(0.25, 0.21, 0.17, 0.88), Color(0.05, 0.04, 0.03, 0.88), 2, false, Vector4(px(8), px(4), px(12), px(5)))
 	st["slot_btn"] = PA.frame(Color("2a231d"), Color("4a4038"), Color("100c0a"), 2, true, Vector4(px(4), px(4), px(4), px(4)))
@@ -439,7 +441,7 @@ func _build_panel() -> void:
 	v.add_child(tabs)
 	# each tab: a little spinning icon, then its name
 	var tab_icons := {
-		"upgrades": ["", "", icon("coin", 2)],
+		"upgrades": ["ui", "coin", icon("coin", 2)],
 		"bombs": ["bombs", "bomb", icon("bomb", 2)],
 		"ores": ["ores", "diamond", ore_icon("diamond", 2)],
 		"worlds": ["world", "0", world_icon(0, 2)],
@@ -533,6 +535,83 @@ func rebuild_tab() -> void:
 	switch_tab(current_tab)
 
 
+## A half-width card for the 2-per-row grids (BOMBS and WORLDS): icon and name on top, the
+## description under it, buttons along the bottom. Returns the same pieces as _row().
+func _card(icon_tex: Texture2D, title: String, parent: Control) -> Dictionary:
+	var row := PanelContainer.new()
+	row.add_theme_stylebox_override("panel", st["row"])
+	row.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	row.mouse_filter = Control.MOUSE_FILTER_PASS
+	var v := VBoxContainer.new()
+	v.add_theme_constant_override("separation", int(px(6)))
+	v.mouse_filter = Control.MOUSE_FILTER_PASS
+	row.add_child(v)
+	var top := HBoxContainer.new()
+	top.add_theme_constant_override("separation", int(px(8)))
+	top.mouse_filter = Control.MOUSE_FILTER_PASS
+	v.add_child(top)
+	var slot := PanelContainer.new()
+	slot.add_theme_stylebox_override("panel", st["slot"])
+	slot.custom_minimum_size = Vector2(px(60), px(60))
+	slot.size_flags_vertical = Control.SIZE_SHRINK_BEGIN
+	slot.mouse_filter = Control.MOUSE_FILTER_PASS
+	var ic := TextureRect.new()
+	ic.texture = icon_tex
+	ic.stretch_mode = TextureRect.STRETCH_KEEP_CENTERED
+	ic.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	slot.add_child(ic)
+	var done := ColorRect.new()   # a soft green wash over the icon = this one's complete
+	done.color = Color(0.35, 0.95, 0.35, 0.32)
+	done.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	done.visible = false
+	slot.add_child(done)
+	top.add_child(slot)
+	# name, and its details right under it, beside the icon
+	var side := VBoxContainer.new()
+	side.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	side.add_theme_constant_override("separation", int(px(2)))
+	side.mouse_filter = Control.MOUSE_FILTER_PASS
+	top.add_child(side)
+	var tl := _label(title, fs(32), C_TEXT, true)
+	tl.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+	tl.custom_minimum_size = Vector2(px(40), 0)
+	side.add_child(tl)
+	var info := RichTextLabel.new()
+	info.bbcode_enabled = true
+	info.fit_content = true
+	info.scroll_active = false
+	info.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+	info.add_theme_font_size_override("normal_font_size", fs(31))
+	info.mouse_filter = Control.MOUSE_FILTER_PASS
+	side.add_child(info)
+	var fill := Control.new()   # pushes the buttons to the bottom of the card
+	fill.size_flags_vertical = Control.SIZE_EXPAND_FILL
+	fill.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	v.add_child(fill)
+	var hb := HBoxContainer.new()
+	hb.add_theme_constant_override("separation", int(px(6)))
+	hb.mouse_filter = Control.MOUSE_FILTER_PASS
+	v.add_child(hb)
+	var btn := Button.new()
+	btn.custom_minimum_size = Vector2(px(60), px(60))
+	btn.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	btn.mouse_filter = Control.MOUSE_FILTER_PASS
+	hb.add_child(btn)
+	parent.add_child(row)
+	return {"row": row, "title": tl, "info": info, "button": btn, "icon": ic, "done": done}
+
+
+## Two cards side by side, row after row.
+func _grid2() -> GridContainer:
+	var g := GridContainer.new()
+	g.columns = 2
+	g.add_theme_constant_override("h_separation", int(px(8)))
+	g.add_theme_constant_override("v_separation", int(px(8)))
+	g.mouse_filter = Control.MOUSE_FILTER_PASS
+	content.add_child(g)
+	return g
+
+
 func _row(icon_tex: Texture2D, title: String) -> Dictionary:
 	var row := PanelContainer.new()
 	row.add_theme_stylebox_override("panel", st["row"])
@@ -607,32 +686,6 @@ func _set_cost_button(b: Button, cost: Dictionary, label_if_free: String) -> voi
 # ---------------------------------------------------------------------------------------------
 
 func _tab_upgrades() -> void:
-	# Auto-bomber for the world you're in
-	var a := _row(icon("auto"), "Auto-Bomber")
-	a["button"].pressed.connect(func(): game.buy_auto())
-	refreshers.append(func():
-		var w: int = game.current_world
-		var lvl: int = game.worlds[w]["auto"]
-		var cost: Dictionary = game.auto_cost(w)
-		var wname: String = Data.WORLDS[w]["name"]
-		if lvl >= game.AUTO_MAX:
-			a["info"].text = "LV %d  [color=#ffcf5a]%.2f bombs/sec[/color] in %s" % [lvl, game.auto_rate(w), wname]
-			if game.world_empty(w):
-				a["info"].text += "\n[color=#b9a990]Resting: nothing left to blast here.[/color]"
-			a["button"].text = "MAX"
-			a["button"].icon = null
-			a["button"].disabled = true
-			return
-		if lvl == 0:
-			var needs := cost_text(cost)
-			a["info"].text = "Drops bombs in %s, even while you're away." % wname + ("\nNeeds " + needs if needs != "" else "")
-		else:
-			var needs := cost_text(cost)
-			a["info"].text = "LV %d  [color=#ffcf5a]%.2f bombs/sec[/color] in %s" % [lvl, game.auto_rate(w), wname] + ("\nNeeds " + needs if needs != "" else "")
-			if game.world_empty(w):
-				a["info"].text += "\n[color=#b9a990]Resting: nothing left to blast here.[/color]"
-		_set_cost_button(a["button"], cost, "UNLOCK"))
-
 	for u in Data.UPGRADES:
 		var r := _row(icon(u["icon"]), u["name"])
 		var uid: String = u["id"]
@@ -649,6 +702,7 @@ func _tab_upgrades() -> void:
 				r["button"].text = game.fmt(c)
 				r["button"].icon = icon("coin", 2)
 				r["button"].disabled = game.coins < c)
+
 
 
 ## Relics tab: the ones you own, plus a "???" for each one still out there.
@@ -672,88 +726,196 @@ func _tab_relics() -> void:
 
 
 func _tab_bombs() -> void:
+	content.add_child(_label("BEDROCK BOMB", fs(25), C_GOLD, true))
 	_bedrock_row()
-	var rebirth_row_done := false
-	for s in Data.SPECIALS:
-		var sid: String = s["id"]
-		if s.has("rebirth"):
-			if game.rebirths < 1 and not game.specials.has(sid):
+	var tip := _label("Tap a bomb to see what it does.", fs(18), C_SUB)
+	tip.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	content.add_child(tip)
+	# the rest in categories, as tiles like the ORES tab
+	var cats := [
+		["SHOP BOMBS", func(sp): return not sp.has("find") and not sp.has("rebirth")],
+		["VAULT BOMBS (FOUND UNDER BEDROCK)", func(sp): return sp.has("find")],
+		["REBIRTH BOMBS (PERMANENT)", func(sp): return sp.has("rebirth")],
+	]
+	for cat in cats:
+		var list: Array = []
+		for sp in Data.SPECIALS:
+			if not cat[1].call(sp):
+				continue
+			if sp.has("rebirth") and game.rebirths < 1 and not game.specials.has(sp["id"]):
 				continue   # the rebirth bombs show up after your first rebirth
-			if not rebirth_row_done:
-				rebirth_row_done = true
-				content.add_child(_label("REBIRTH BOMBS (PERMANENT)", fs(25), C_GOLD, true))
-		var r := _row(micon("bombs", sid, sid), s["name"])
-		set_model_icon(r["icon"], "bombs", sid, sid, 3)
-		r["button"].pressed.connect(func():
-			if game.specials.has(sid):
-				game.fire_special(sid)
-			else:
-				game.unlock_special(sid))
-		# reload upgrade button (shows after unlocking)
-		var up := Button.new()
-		up.custom_minimum_size = Vector2(px(150), px(72))
-		up.size_flags_vertical = Control.SIZE_SHRINK_CENTER
-		up.mouse_filter = Control.MOUSE_FILTER_PASS
-		var hb: Node = r["button"].get_parent()
-		hb.add_child(up)
-		hb.move_child(up, r["button"].get_index())
-		up.pressed.connect(func(): game.upgrade_special(sid))
-		var hidden: bool = s.has("find")
-		var reborn_bomb: bool = s.has("rebirth")
-		refreshers.append(func():
-			if reborn_bomb and not game.specials.has(sid):
-				r["title"].text = "???"
-				r["icon"].modulate = Color(0, 0, 0, 0.75)
-				r["info"].text = "Unlocks for good at [color=#ffcf5a]%d rebirths[/color] (you have %d)." % [int(s["rebirth"]), game.rebirths]
-				r["button"].text = "LOCKED"
-				r["button"].icon = icon("lock", 2)
-				r["button"].disabled = true
-				up.visible = false
-				return
-			if reborn_bomb:
-				r["title"].text = s["name"]
-				r["icon"].modulate = Color.WHITE
-			if hidden and not game.specials.has(sid):
-				var fw: int = int(s["find"])
-				r["title"].text = "???"
-				r["icon"].modulate = Color(0, 0, 0, 0.75)
-				r["info"].text = ("Hidden in the vault under the bedrock of %s." % Data.WORLDS[fw]["name"]) if fw < game.unlocked_worlds else "Hidden somewhere deeper..."
-				r["button"].text = "HIDDEN"
-				r["button"].icon = icon("lock", 2)
-				r["button"].disabled = true
-				up.visible = false
-				return
-			if hidden:
-				r["title"].text = s["name"]
-				r["icon"].modulate = Color.WHITE
-			if game.specials.has(sid):
-				var lvl: int = game.special_level(sid)
-				var reload_txt := "Reload [color=#ffcf5a]%ds[/color]" % int(round(game.special_cooldown(sid)))
-				if lvl < Data.SPECIAL_MAX_LEVEL:
-					var nxt: float = game.special_cooldown_at(sid, lvl + 1)
-					reload_txt += ", upgrade to [color=#9be36b]%ds[/color]" % int(round(nxt))
-				r["info"].text = s["desc"] + "\n" + reload_txt
-				if sid == "mirror":
-					var copy: String = game.mirror_copy
-					r["info"].text = s["desc"] + "\nReloads as long as the bomb it copies"
-					if copy != "":
-						r["info"].text += " ([color=#ffcf5a]%ds[/color])" % int(round(game.special_cooldown(copy)))
-					r["info"].text += "\nNext copy: " + ("[color=#b46bff]%s[/color]" % game.special_name(copy) if copy != "" else "[color=#b9a990]locked until you fire another special bomb[/color]")
-				r["button"].visible = false   # fired from the hotbar
-				up.visible = sid != "mirror"   # its reload comes from the copied bomb, so nothing to upgrade
-				if lvl >= Data.SPECIAL_MAX_LEVEL:
-					up.text = "MAX"
-					up.icon = null
-					up.disabled = true
-				else:
-					var c: float = game.special_upgrade_cost(sid)
-					up.text = game.fmt(c)
-					up.icon = icon("coin", 2)
-					up.disabled = game.coins < c
-			else:
-				up.visible = false
-				r["info"].text = s["desc"] + "\nNeeds " + cost_text(s["cost"])
-				_set_cost_button(r["button"], s["cost"], "UNLOCK"))
+			list.append(sp)
+		if list.is_empty():
+			continue
+		var gap := Control.new()
+		gap.custom_minimum_size = Vector2(0, px(6))
+		gap.mouse_filter = Control.MOUSE_FILTER_IGNORE
+		content.add_child(gap)
+		content.add_child(_label(cat[0], fs(22), C_GOLD, true))
+		var grid := GridContainer.new()
+		grid.columns = 4
+		grid.add_theme_constant_override("h_separation", int(px(6)))
+		grid.add_theme_constant_override("v_separation", int(px(8)))
+		grid.mouse_filter = Control.MOUSE_FILTER_PASS
+		content.add_child(grid)
+		for sp in list:
+			grid.add_child(_bomb_tile(sp))
+
+
+## Is this special bomb still a mystery (a vault bomb not found yet, or a rebirth bomb not earned)?
+func _bomb_secret(s: Dictionary) -> bool:
+	return (s.has("find") or s.has("rebirth")) and not game.specials.has(s["id"])
+
+
+## One bomb tile in the BOMBS tab: its spinning icon and its reload time. Tap it for the details.
+func _bomb_tile(s: Dictionary) -> Control:
+	var sid: String = s["id"]
+	var tile := Button.new()
+	tile.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	tile.custom_minimum_size = Vector2(0, px(128))
+	tile.clip_contents = true
+	tile.mouse_filter = Control.MOUSE_FILTER_PASS
+	tile.focus_mode = Control.FOCUS_NONE
+	for state in ["normal", "hover", "pressed", "hover_pressed", "disabled"]:
+		tile.add_theme_stylebox_override(state, st["slot"])
+	var v := VBoxContainer.new()
+	v.set_anchors_preset(Control.PRESET_FULL_RECT)
+	v.offset_left = px(4)
+	v.offset_right = -px(4)
+	v.offset_bottom = -px(4)
+	v.alignment = BoxContainer.ALIGNMENT_CENTER
+	v.add_theme_constant_override("separation", int(px(2)))
+	v.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	tile.add_child(v)
+	var ic := TextureRect.new()
+	ic.texture = micon("bombs", sid, sid, 3)
+	ic.expand_mode = TextureRect.EXPAND_IGNORE_SIZE
+	ic.stretch_mode = TextureRect.STRETCH_KEEP_ASPECT_CENTERED
+	ic.custom_minimum_size = Vector2(px(54), px(54))
+	ic.set_meta("fixed_size", px(54))
+	ic.size_flags_horizontal = Control.SIZE_SHRINK_CENTER
+	ic.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	set_model_icon(ic, "bombs", sid, sid, 3)
+	v.add_child(ic)
+	# bottom: "45 sec" on the left (number in yellow, "sec" in white), green upgrade button on the right
+	var row := HBoxContainer.new()
+	row.add_theme_constant_override("separation", int(px(3)))
+	row.mouse_filter = Control.MOUSE_FILTER_PASS
+	v.add_child(row)
+	var pad := Control.new()
+	pad.custom_minimum_size = Vector2(px(4), 0)
+	pad.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	row.add_child(pad)
+	var num := _label("0", fs(19), C_GOLD, true)
+	num.size_flags_vertical = Control.SIZE_SHRINK_CENTER
+	row.add_child(num)
+	var unit := _label("sec", fs(19), C_TEXT, true)
+	unit.size_flags_vertical = Control.SIZE_SHRINK_CENTER
+	unit.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	row.add_child(unit)
+	# the upgrade button runs along the bottom of the tile: arrow + price
+	var up := Button.new()
+	up.icon = icon("up", 1)
+	up.icon_alignment = HORIZONTAL_ALIGNMENT_LEFT
+	up.alignment = HORIZONTAL_ALIGNMENT_CENTER
+	up.add_theme_font_size_override("font_size", fs(19))
+	up.add_theme_constant_override("icon_max_width", int(px(22)))
+	up.add_theme_constant_override("h_separation", int(px(3)))
+	up.custom_minimum_size = Vector2(0, px(36))
+	up.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	up.mouse_filter = Control.MOUSE_FILTER_STOP   # its own tap, not the tile's
+	up.focus_mode = Control.FOCUS_NONE
+	_style_button(up, "green")
+	for state in ["normal", "hover", "pressed", "hover_pressed", "disabled"]:
+		var sb: StyleBox = up.get_theme_stylebox(state)
+		if sb:
+			sb = sb.duplicate()
+			sb.content_margin_left = px(5)
+			sb.content_margin_right = px(5)
+			sb.content_margin_top = px(4)
+			sb.content_margin_bottom = px(6)
+			up.add_theme_stylebox_override(state, sb)   # thin padding so the arrow can be big
+	var up_row := HBoxContainer.new()
+	up_row.mouse_filter = Control.MOUSE_FILTER_PASS
+	up_row.add_child(up)
+	v.add_child(up_row)
+	up.pressed.connect(func():
+		if game.coins >= game.special_upgrade_cost(sid):
+			game.upgrade_special(sid)
+		else:
+			game.sfx.play("click")
+			_bomb_popup(sid))   # can't afford it yet: show what it costs
+	refreshers.append(func():
+		var secret := _bomb_secret(s)
+		var owned: bool = game.specials.has(sid)
+		ic.modulate = Color(0, 0, 0, 0.75) if secret else (Color.WHITE if owned else Color(0.55, 0.55, 0.55))
+		up.visible = owned and sid != "mirror" and game.special_level(sid) < Data.SPECIAL_MAX_LEVEL
+		if up.visible:
+			var c: float = game.special_upgrade_cost(sid)
+			up.text = game.fmt(c)
+			up.modulate = Color.WHITE if game.coins >= c else Color(1, 1, 1, 0.5)
+		if secret:
+			num.text = "?"
+			unit.visible = false
+			return
+		unit.visible = true
+		var cd: float = game.special_cooldown(sid)
+		if sid == "mirror" and game.mirror_copy != "":
+			cd = game.special_cooldown(game.mirror_copy)
+		num.text = str(int(round(cd))))
+	tile.pressed.connect(func():
+		game.sfx.play("click")
+		_bomb_popup(sid))
+	return tile
+
+
+## Tap a bomb: what it does, its reload, and the buttons to buy it or speed up its reload.
+func _bomb_popup(sid: String) -> void:
+	var s := Data.get_special(sid)
+	var tex := micon("bombs", sid, sid, 4)
+	var spin := ["bombs", sid]
+	var close := ["CLOSE", Callable(), "gold"]
+	if s.has("rebirth") and not game.specials.has(sid):
+		show_popup("???", "Unlocks for good at [color=#ffcf5a]%d rebirths[/color] (you have %d)." % [int(s["rebirth"]), game.rebirths],
+			[close], tex)
+		return
+	if s.has("find") and not game.specials.has(sid):
+		var fw: int = int(s["find"])
+		var where := ("Hidden in the vault under the bedrock of [color=#ffcf5a]%s[/color]." % Data.WORLDS[fw]["name"]) if fw < game.unlocked_worlds else "Hidden somewhere deeper..."
+		show_popup("???", where, [close], tex)
+		return
+	var lvl: int = game.special_level(sid)
+	var body: String = s["desc"] + "."
+	var buttons: Array = []
+	if not game.specials.has(sid):
+		# a shop bomb you haven't bought yet
+		body += "\nReload: [color=#ffcf5a]%d sec[/color]" % int(round(game.special_cooldown(sid)))
+		body += "\nNeeds " + cost_text(s["cost"])
+		if game.can_afford(s["cost"]):
+			buttons.append(["UNLOCK", func():
+				game.unlock_special(sid)
+				_bomb_popup(sid), "green"])
+	elif sid == "mirror":
+		var copy: String = game.mirror_copy
+		body += "\nReloads as long as the bomb it copies"
+		if copy != "":
+			body += " ([color=#ffcf5a]%d sec[/color])" % int(round(game.special_cooldown(copy)))
+		body += ".\nNext copy: " + ("[color=#b46bff]%s[/color]" % game.special_name(copy) if copy != "" else "[color=#b9a990]fire another special bomb first[/color]")
+	else:
+		body += "\nReload: [color=#ffcf5a]%d sec[/color]" % int(round(game.special_cooldown(sid)))
+		if lvl < Data.SPECIAL_MAX_LEVEL:
+			var nxt: float = game.special_cooldown_at(sid, lvl + 1)
+			var c: float = game.special_upgrade_cost(sid)
+			body += "\nUpgrade to [color=#9be36b]%d sec[/color] for [color=#ffcf5a]%s coins[/color]." % [int(round(nxt)), game.fmt(c)]
+			if game.coins >= c:
+				buttons.append(["FASTER RELOAD", func():
+					game.upgrade_special(sid)
+					_bomb_popup(sid), "green"])
+		else:
+			body += "\n[color=#9be36b]Reload fully upgraded.[/color]"
+		body += "\nFire it from the hotbar."
+	buttons.append(close)
+	show_popup(String(s["name"]).to_upper(), body, buttons, tex, spin)
 
 
 ## Rebirth popup: the five rebirth bombs spinning in a row, black until you've unlocked them,
@@ -803,6 +965,11 @@ func _bedrock_row() -> void:
 				line += "\n[color=#b9a990]Dig down to the bedrock first.[/color]  Costs %d/%d %s (buried in every world)" % [have, cost, tname]
 			"broken":
 				line = "The bedrock of %s is already broken. Dig the vault!" % Data.WORLDS[w]["name"]
+			"done_before":
+				line = "You already broke the bedrock of %s and emptied its vault." % Data.WORLDS[w]["name"]
+				var nxt: int = game.next_bedrock_world()
+				if nxt >= 0:
+					line += "\nYour next Bedrock Bomb goes to [color=#ffcf5a]%s[/color]." % Data.WORLDS[nxt]["name"]
 			"falling":
 				line += "\n[color=#9be36b]On its way down...[/color]"
 			"out_of_order":
@@ -816,115 +983,136 @@ func _bedrock_row() -> void:
 
 
 func _tab_ores() -> void:
+	# the big promise: ores survive a rebirth (they'll unlock bombs once you've piled up enough)
+	var keep := _label("Your ores are KEPT when you rebirth!", fs(22), Color("9be36b"), true)
+	keep.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	keep.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+	content.add_child(keep)
+	var tip := _label("Tap an ore to buy more.", fs(18), C_SUB)
+	tip.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	content.add_child(tip)
+	# every world you've reached this run, or whose ores you've found before (they're still yours)
+	var shown: Array = []
 	for w in Data.WORLDS.size():
 		var world: Dictionary = Data.WORLDS[w]
-		var unlocked: bool = w < game.unlocked_worlds
-		if w > game.unlocked_worlds:
-			break
-		var head := _label(world["name"].to_upper() if unlocked else "??? (LOCKED WORLD)", fs(25), C_GOLD if unlocked else C_SUB, true)
-		content.add_child(head)
-		if not unlocked:
-			continue
-		var grid := GridContainer.new()
-		grid.columns = 2
-		grid.add_theme_constant_override("h_separation", int(px(8)))
-		grid.add_theme_constant_override("v_separation", int(px(8)))
-		grid.mouse_filter = Control.MOUSE_FILTER_PASS
-		content.add_child(grid)
-		var ids: Array = []
-		for o in world["ores"]:
-			ids.append(o["id"])
-		ids.append(world["treasure"]["id"])
-		for oid in ids:
-			grid.add_child(_ore_cell(oid))
+		var known: bool = w < game.unlocked_worlds
+		if not known:
+			for o in world["ores"]:
+				if game.ores_seen.has(o["id"]):
+					known = true
+					break
+		if known:
+			shown.append(w)
+	# two worlds side by side; each world is a 3x2 block of ore tiles
+	for k in range(0, shown.size(), 2):
+		if k > 0:
+			var gap := Control.new()   # a little breathing room between each pair of worlds
+			gap.custom_minimum_size = Vector2(0, px(14))
+			gap.mouse_filter = Control.MOUSE_FILTER_IGNORE
+			content.add_child(gap)
+		var pair := HBoxContainer.new()
+		pair.add_theme_constant_override("separation", int(px(12)))
+		pair.mouse_filter = Control.MOUSE_FILTER_PASS
+		content.add_child(pair)
+		for j in 2:
+			var col := VBoxContainer.new()
+			col.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+			col.size_flags_stretch_ratio = 1.0
+			col.add_theme_constant_override("separation", int(px(4)))
+			col.mouse_filter = Control.MOUSE_FILTER_PASS
+			pair.add_child(col)
+			if k + j >= shown.size():
+				continue
+			var world: Dictionary = Data.WORLDS[shown[k + j]]
+			var head := _label(world["name"].to_upper(), fs(20), C_GOLD, true)
+			head.clip_text = true
+			head.custom_minimum_size = Vector2(px(40), 0)
+			col.add_child(head)
+			var grid := GridContainer.new()
+			grid.columns = 3
+			grid.add_theme_constant_override("h_separation", int(px(4)))
+			grid.add_theme_constant_override("v_separation", int(px(8)))
+			grid.mouse_filter = Control.MOUSE_FILTER_PASS
+			col.add_child(grid)
+			var ids: Array = []
+			for o in world["ores"]:
+				ids.append(o["id"])
+			ids.append(world["treasure"]["id"])
+			for oid in ids:
+				grid.add_child(_ore_tile(oid))
 
 
-## One ore in the ORES tab: icon, name, how many you have, and the price with - (sell) / + (buy).
-func _ore_cell(oid: String) -> Control:
-	var cell := PanelContainer.new()
-	cell.add_theme_stylebox_override("panel", st["slot"])
-	cell.size_flags_horizontal = Control.SIZE_EXPAND_FILL
-	cell.custom_minimum_size = Vector2(0, px(96))
-	cell.mouse_filter = Control.MOUSE_FILTER_PASS
-	var h := HBoxContainer.new()
-	h.add_theme_constant_override("separation", int(px(6)))
-	h.mouse_filter = Control.MOUSE_FILTER_PASS
-	cell.add_child(h)
+## One ore tile in the ORES tab: its spinning icon and how many you have. Tap it to buy more.
+func _ore_tile(oid: String) -> Control:
+	var tile := Button.new()
+	tile.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	tile.custom_minimum_size = Vector2(0, px(92))
+	tile.clip_contents = true   # a big spinning ore never spills over the tile below
+	tile.mouse_filter = Control.MOUSE_FILTER_PASS
+	tile.focus_mode = Control.FOCUS_NONE
+	for state in ["normal", "hover", "pressed", "hover_pressed", "disabled"]:
+		tile.add_theme_stylebox_override(state, st["slot"])
+	var v := VBoxContainer.new()
+	v.set_anchors_preset(Control.PRESET_FULL_RECT)
+	v.alignment = BoxContainer.ALIGNMENT_CENTER
+	v.add_theme_constant_override("separation", 0)
+	v.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	tile.add_child(v)
 	var seen: bool = game.ores_seen.has(oid)
 	var ic := TextureRect.new()
-	ic.texture = ore_icon(oid, 3)
-	ic.stretch_mode = TextureRect.STRETCH_KEEP_CENTERED
+	ic.texture = ore_icon(oid, 2)
+	ic.expand_mode = TextureRect.EXPAND_IGNORE_SIZE
+	ic.stretch_mode = TextureRect.STRETCH_KEEP_ASPECT_CENTERED
+	ic.custom_minimum_size = Vector2(px(50), px(50))
+	ic.set_meta("fixed_size", px(50))   # spinning icons keep to this size too
+	ic.size_flags_horizontal = Control.SIZE_SHRINK_CENTER
 	ic.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	if seen:
-		set_model_icon(ic, "ores", oid, "gem", 3, game.ore_table[oid]["color"])
+		set_model_icon(ic, "ores", oid, "gem", 2, game.ore_table[oid]["color"])
 	else:
 		ic.modulate = Color(0, 0, 0, 0.75)   # silhouette until you find it
-	h.add_child(ic)
-	var v := VBoxContainer.new()
-	v.add_theme_constant_override("separation", 0)
-	v.alignment = BoxContainer.ALIGNMENT_CENTER
-	v.size_flags_horizontal = Control.SIZE_EXPAND_FILL
-	v.mouse_filter = Control.MOUSE_FILTER_IGNORE
-	h.add_child(v)
-	var nm := _label(game.ore_table[oid]["name"] if seen else "???", fs(20), C_SUB)
-	nm.clip_text = true
-	nm.custom_minimum_size = Vector2(px(60), 0)
-	v.add_child(nm)
-	var cnt := _label("0", fs(25), C_TEXT, true)
+	v.add_child(ic)
+	var cnt := _label("0", fs(18), C_TEXT, true)
+	cnt.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	cnt.clip_text = true
+	cnt.custom_minimum_size = Vector2(px(20), 0)
 	v.add_child(cnt)
-	refreshers.append(func(): cnt.text = game.fmt(float(game.ores.get(oid, 0))))
-	if not seen:
-		return cell
+	refreshers.append(func(): cnt.text = game.fmt(float(game.ores.get(oid, 0))) if seen else "?")
+	if seen:
+		tile.pressed.connect(func():
+			game.sfx.play("click")
+			_ore_popup(oid))
+	return tile
+
+
+## Tap an ore: what it is, how many you have, and buttons to buy more.
+func _ore_popup(oid: String) -> void:
+	var o: Dictionary = game.ore_table[oid]
+	var have := int(game.ores.get(oid, 0))
+	var wname: String = Data.WORLDS[int(o["world"])]["name"]
+	var tex := micon("ores", oid, "gem", 4, o["color"])
+	var spin := ["ores", oid, "gem", o["color"]]
 	if not game.ore_tradable(oid):
-		var note := _label("Dug up in\nevery world", fs(20), C_SUB)
-		note.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
-		h.add_child(note)
-		return cell
-
-	# price on top, - and + underneath
-	var trade := VBoxContainer.new()
-	trade.add_theme_constant_override("separation", int(px(4)))
-	trade.alignment = BoxContainer.ALIGNMENT_CENTER
-	trade.mouse_filter = Control.MOUSE_FILTER_PASS
-	h.add_child(trade)
-	var price_row := HBoxContainer.new()
-	price_row.alignment = BoxContainer.ALIGNMENT_CENTER
-	price_row.add_theme_constant_override("separation", int(px(4)))
-	price_row.mouse_filter = Control.MOUSE_FILTER_IGNORE
-	trade.add_child(price_row)
-	var coin := TextureRect.new()
-	coin.texture = icon("coin", 1)
-	coin.stretch_mode = TextureRect.STRETCH_KEEP_CENTERED
-	coin.mouse_filter = Control.MOUSE_FILTER_IGNORE
-	price_row.add_child(coin)
-	var price := _label("0", fs(20), C_GOLD, true)
-	price_row.add_child(price)
-	var btns := HBoxContainer.new()
-	btns.add_theme_constant_override("separation", int(px(4)))
-	btns.mouse_filter = Control.MOUSE_FILTER_PASS
-	trade.add_child(btns)
-	var minus := Button.new()
-	minus.text = "-"
-	var plus := Button.new()
-	plus.text = "+"
-	for pair in [[minus, "red"], [plus, "green"]]:
-		var b: Button = pair[0]
-		b.custom_minimum_size = Vector2(px(56), px(46))
-		b.mouse_filter = Control.MOUSE_FILTER_PASS
-		b.add_theme_font_size_override("font_size", fs(30))
-		_style_button(b, pair[1])
-		btns.add_child(b)
-	minus.pressed.connect(func(): game.sell_ore(oid))
-	plus.pressed.connect(func(): game.buy_ore(oid))
-	refreshers.append(func():
-		var p: float = game.ore_value(oid)
-		price.text = game.fmt(p)
-		plus.disabled = game.coins < p
-		minus.disabled = int(game.ores.get(oid, 0)) <= 0)
-	return cell
+		show_popup(String(o["name"]).to_upper(),
+			"You have [color=#ffcf5a]%s[/color].\nCosmic Eggs can't be bought. Dig them up - every world hides a few." % game.fmt(float(have)),
+			[["OK", Callable(), "green"]], tex, spin)
+		return
+	var price: float = game.ore_value(oid)
+	var can: int = game.ores_affordable(oid)
+	var body := "From %s.\nYou have [color=#ffcf5a]%s[/color].\nPrice: [color=#ffcf5a]%s coins[/color] each" % [wname, game.fmt(float(have)), game.fmt(price)]
+	body += "\n[color=#%s]You can afford %s.[/color]" % ["9be36b" if can > 0 else "ff6b5a", game.fmt(float(can))]
+	var buy := func(n: int):
+		game.buy_ore(oid, n)
+		_ore_popup(oid)   # reopen with the new numbers
+	show_popup(String(o["name"]).to_upper(), body, [
+		["BUY 1", func(): buy.call(1), "green"],
+		["BUY 10", func(): buy.call(10), "green"],
+		["BUY MAX", func(): buy.call(can), "green"],
+		["CLOSE", Callable(), "gold"],
+	], tex, spin)
 
 
-const EARLY_WORLDS := 5   # Worlds 1-5 can be folded away in the WORLDS tab
+const EARLY_WORLDS := 6   # Worlds 1-6 can be folded away in the WORLDS tab
 
 func _tab_worlds() -> void:
 	var fold := Button.new()
@@ -938,70 +1126,87 @@ func _tab_worlds() -> void:
 		game.hide_early_worlds = not game.hide_early_worlds
 		game.save_game()
 		rebuild_tab())
-	content.add_child(fold)
+	# folding Worlds 1-6 only makes sense once there's something past them to look at
+	var can_fold: bool = game.unlocked_worlds >= EARLY_WORLDS
+	if can_fold:
+		content.add_child(fold)
+	else:
+		fold.queue_free()
+	var grid := _grid2()
 	for w in Data.WORLDS.size():
-		if w < EARLY_WORLDS and game.hide_early_worlds:
+		if w < EARLY_WORLDS and game.hide_early_worlds and can_fold:
 			continue
+		if w > game.unlocked_worlds:
+			break   # only the next world to unlock is shown; the rest stay a surprise
 		var world: Dictionary = Data.WORLDS[w]
-		var r := _row(world_icon(w, 3), world["name"])
+		var r := _card(world_icon(w, 3), world["name"], grid)
 		set_model_icon(r["icon"], "world", str(w), "world", 3)
 		var idx := w
 		r["button"].pressed.connect(func(): game.travel(idx))
+		# RESET: white refresh arrows on red.  TRAVEL: white arrow on green.
 		var reset := Button.new()
-		reset.text = "RESET"
-		reset.custom_minimum_size = Vector2(px(130), px(72))
-		reset.size_flags_vertical = Control.SIZE_SHRINK_CENTER
+		reset.icon = icon("reset", 2)
+		reset.icon_alignment = HORIZONTAL_ALIGNMENT_CENTER
+		reset.custom_minimum_size = Vector2(px(60), px(60))
+		reset.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 		reset.mouse_filter = Control.MOUSE_FILTER_PASS
-		reset.add_theme_font_size_override("font_size", fs(25))
 		_style_button(reset, "red")
 		var hb: Node = r["button"].get_parent()
 		hb.add_child(reset)
 		hb.move_child(reset, r["button"].get_index())
-		r["button"].custom_minimum_size = Vector2(px(150), px(72))
+		r["button"].icon_alignment = HORIZONTAL_ALIGNMENT_CENTER
 		reset.pressed.connect(func():
 			game.sfx.play("click")
+			var eggs: int = game.egg_allotment(idx) + game.eggs_left_in(idx) + int(game.worlds[idx].get("egg_carry", 0))
+			var egg_line := "\nCosmic Eggs in the new pillar: [color=#%s]%d[/color]" % ["fff1c9" if eggs > 0 else "ff6b5a", eggs]
+			if eggs == 0:
+				egg_line += " (this world's eggs are all used up)"
 			show_popup("RESET %s?" % Data.WORLDS[idx]["name"].to_upper(),
-				"This grows a brand new pillar so you can blast it again.\nYour coins, ores and upgrades stay.",
+				"This grows a brand new pillar so you can blast it again.\nYour coins, ores and upgrades stay." + egg_line,
 				[["CANCEL", Callable(), "gold"], ["RESET", func(): game.reset_world(idx), "red"]], world_icon(idx, 5)))
 		refreshers.append(func():
 			var unlocked: bool = idx < game.unlocked_worlds
 			var data: Dictionary = game.worlds[idx]
 			reset.visible = unlocked and bool(data.get("done", false))
-			r["icon"].modulate = Color.WHITE if unlocked else Color(0, 0, 0, 0.75)
+			# after a rebirth you've already been everywhere, so locked worlds stay in colour
+			# (just dimmed) with their names showing, instead of going back to black "???"
+			var known: bool = game.rebirths > 0
+			r["icon"].modulate = Color.WHITE if unlocked else (Color(0.5, 0.5, 0.5) if known else Color(0, 0, 0, 0.75))
 			if not unlocked:
-				r["title"].text = "???"
-				var need: String = game.world_needs(idx)
-				if need != "":
-					var home: int = game.special_home(need)
-					var have := "[color=#9be36b]found[/color]" if game.specials.has(need) else "[color=#ff6b5a]not found[/color]"
-					r["info"].text = "A Deep Realm. Reach the bottom of %s and find the %s (%s), hidden under the bedrock of %s." % [Data.WORLDS[idx - 1]["name"], game.special_name(need), have, Data.WORLDS[home]["name"]]
+				r["title"].text = Data.WORLDS[idx]["name"] if known else "???"
+				if idx >= Data.ORIGINAL_WORLDS:
+					var got: int = game.vault_bombs_found()
+					var tot: int = game.vault_bombs_total()
+					var col := "9be36b" if got >= tot else "ff6b5a"
+					r["info"].text = "A Deep Realm. Reach the bottom of %s and find all %d vault bombs hidden under the bedrock of Worlds 1-6 ([color=#%s]%d/%d[/color])." % [Data.WORLDS[idx - 1]["name"], tot, col, got, tot]
 				else:
 					r["info"].text = "Break through the bottom of %s to open the portal." % Data.WORLDS[idx - 1]["name"]
-				r["button"].text = "LOCKED"
+				r["button"].text = ""
 				r["button"].icon = icon("lock", 2)
 				r["button"].disabled = true
+				r["done"].visible = false
 				return
-			var tags: Array = []
-			if int(data["auto"]) > 0:
-				tags.append("Auto %.2f/s" % game.auto_rate(idx))
-			if data.get("done", false):
-				tags.append("[color=#9be36b]BEDROCK REACHED[/color]")
-			var txt := "  ".join(tags)
-			if data.get("bedrock_broken", false):
-				txt += "  [color=#ffcf5a]VAULT OPEN[/color]"
+			var txt := ""
+			if data.get("bedrock_broken", false) and not game.world_prize_found(idx):
+				txt = "[color=#ffcf5a]VAULT OPEN[/color]"
 			for sp in Data.SPECIALS:
 				if int(sp.get("find", -1)) == idx and game.specials.has(sp["id"]):
-					txt += "  [color=#b46bff]BOMB FOUND[/color]"
+					txt = "[color=#b46bff]BOMB FOUND[/color]"
 			for rl in Data.RELICS:
 				if int(rl["find"]) == idx and game.has_relic(rl["id"]):
-					txt += "  [color=#b46bff]RELIC FOUND[/color]"
+					txt = "[color=#b46bff]RELIC FOUND[/color]"
+			if idx == Data.STAR_CORE_WORLD and game.world_prize_found(idx):
+				txt = "[color=#b46bff]CORE FOUND[/color]"
+			# the world's vault prize (bomb, relic or Star Core) is found: a green wash over its icon
+			r["done"].visible = game.world_prize_found(idx)
 			r["info"].text = txt
-			r["button"].icon = null
 			if idx == game.current_world:
+				r["button"].icon = null
 				r["button"].text = "HERE"
 				r["button"].disabled = true
 			else:
-				r["button"].text = "TRAVEL"
+				r["button"].icon = icon("go", 2)
+				r["button"].text = ""
 				_style_button(r["button"], "green")
 				r["button"].disabled = false)
 
@@ -1191,10 +1396,10 @@ func _build_notes() -> void:
 	add_child(note_layer)
 
 
-func notify(title: String, body: String, icon_tex: Texture2D = null, spin: Array = [], action := Callable(), secs := 5.0, epic := false) -> void:
-	var w := vp.x * (0.74 if epic else 0.66)
+func notify(title: String, body: String, icon_tex: Texture2D = null, spin: Array = [], action := Callable(), secs := 5.0, epic := false, soft := false) -> void:
+	var w := vp.x * (0.74 if epic else (0.6 if soft else 0.66))
 	var p := PanelContainer.new()
-	p.add_theme_stylebox_override("panel", st["note_epic"] if epic else st["note"])
+	p.add_theme_stylebox_override("panel", st["note_epic"] if epic else (st["note_soft"] if soft else st["note"]))
 	p.custom_minimum_size = Vector2(w, 0)
 	p.mouse_filter = Control.MOUSE_FILTER_STOP
 	var h := HBoxContainer.new()
@@ -1210,14 +1415,14 @@ func notify(title: String, body: String, icon_tex: Texture2D = null, spin: Array
 		ic.mouse_filter = Control.MOUSE_FILTER_IGNORE
 		h.add_child(ic)
 		if spin.size() >= 2:
-			set_model_icon(ic, spin[0], spin[1], spin[1], 4 if epic else 3)
+			set_model_icon(ic, spin[0], spin[1], spin[1], 4 if epic else (2 if soft else 3))
 		icon_w = maxf(ic.get_combined_minimum_size().x, px(56))
 	var v := VBoxContainer.new()
 	v.add_theme_constant_override("separation", int(px(2)))
 	v.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	v.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	h.add_child(v)
-	var t := _label(title, fs(36) if epic else fs(26), C_GOLD, true)
+	var t := _label(title, fs(36) if epic else (fs(24) if soft else fs(26)), Color("fff1c9") if soft else C_GOLD, true)
 	if epic:
 		t.add_theme_constant_override("outline_size", int(px(8)))
 		t.add_theme_color_override("font_outline_color", Color("5a1e8a"))
@@ -1231,7 +1436,7 @@ func notify(title: String, body: String, icon_tex: Texture2D = null, spin: Array
 		b.scroll_active = false
 		b.mouse_filter = Control.MOUSE_FILTER_IGNORE
 		b.custom_minimum_size = Vector2(w - icon_w - px(40), 0)
-		b.add_theme_font_size_override("normal_font_size", fs(25) if epic else fs(22))
+		b.add_theme_font_size_override("normal_font_size", fs(25) if epic else (fs(20) if soft else fs(22)))
 		b.add_theme_color_override("default_color", C_TEXT)
 		b.text = body
 		v.add_child(b)
@@ -1493,7 +1698,9 @@ func show_popup(title: String, body: String, buttons: Array, icon_tex: Texture2D
 		ic.stretch_mode = TextureRect.STRETCH_KEEP_CENTERED
 		ic.size_flags_horizontal = Control.SIZE_SHRINK_CENTER
 		popup_box.add_child(ic)
-		if spin.size() >= 2:
+		if spin.size() >= 4:   # [folder, id, fallback icon, tint]
+			set_model_icon(ic, spin[0], spin[1], spin[2], 5, spin[3])
+		elif spin.size() >= 2:
 			set_model_icon(ic, spin[0], spin[1], spin[1], 5)
 	var t := _label(title, fs(40), C_GOLD, true)
 	t.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
@@ -1753,7 +1960,7 @@ func show_stats_page() -> void:
 	lines += "\nRebirths: [color=#ffcf5a]%d[/color]" % game.rebirths
 	lines += "\nBlocks blasted: [color=#ffcf5a]%s[/color]" % n.call("blocks")
 	lines += "\nTaps: [color=#ffcf5a]%s[/color]   Bombs you dropped: [color=#ffcf5a]%s[/color]" % [n.call("taps"), n.call("bombs")]
-	lines += "\nAuto-bomber bombs: [color=#ffcf5a]%s[/color]" % n.call("auto_bombs")
+
 	lines += "\nSpecial bombs fired: [color=#ffcf5a]%s[/color]" % n.call("specials")
 	lines += "\nCoins earned: [color=#ffcf5a]%s[/color]" % n.call("coins")
 	lines += "\nOres dug up: [color=#ffcf5a]%s[/color]" % n.call("ores")

@@ -143,11 +143,17 @@ func generate(widx: int, seed_val: int) -> void:
 	_make_walls()
 
 
+## How many Cosmic Eggs the next generate() buries (the game sets this first).
+var eggs_to_bury := 0
+## Eggs scooped up when the crater walls above the hole get trimmed away (the game collects them).
+var cut_eggs: Array = []
+
 ## Cosmic Eggs: single blocks spread evenly from near the top to a few layers above the bedrock,
 ## away from the edges, so a normal dig turns them all up. (Own random stream, so the rest of
 ## the pillar comes out the same as before.)
 func _bury_eggs(seed_val: int) -> void:
-	var n: int = int(Data.EGGS_PER_WORLD[world_index])
+	var n: int = eggs_to_bury
+	eggs_to_bury = 0
 	var eb: int = blocks.index_of("egg_" + Data.WORLDS[world_index]["id"])
 	if n <= 0 or eb < 0:
 		return
@@ -163,6 +169,29 @@ func _bury_eggs(seed_val: int) -> void:
 			if types[i] != eb:
 				types[i] = eb
 				break
+
+
+## Cosmic Egg blocks still in this pillar.
+func count_eggs() -> int:
+	return _count_eggs_in(types)
+
+
+## Cosmic Egg blocks in a saved pillar (another world's), without loading it.
+func count_eggs_in_state(widx: int, state: Dictionary) -> int:
+	var n := W * W * (int(Data.WORLDS[widx]["depth"]) + Data.VAULT_LAYERS + 2)
+	var t := Marshalls.base64_to_raw(str(state.get("types", ""))).decompress_dynamic(n * 2, FileAccess.COMPRESSION_DEFLATE)
+	return _count_eggs_in(t)
+
+
+func _count_eggs_in(arr: PackedByteArray) -> int:
+	var ids := {}
+	for w in Data.WORLDS.size():
+		ids[blocks.index_of("egg_" + Data.WORLDS[w]["id"])] = true
+	var n := 0
+	for v in arr:
+		if ids.has(v):
+			n += 1
+	return n
 
 
 ## Ore veins between layers d_from..d_to. rare_boost > 0 makes rare ores more common (vaults).
@@ -719,6 +748,15 @@ func update_cut() -> bool:
 	var target := mini(maxi(0, int(floor_depth()) - CUT_GAP), H - 2)
 	if target < cut + 2:
 		return false
+	# any egg left up in the trimmed-off walls is scooped up, never lost
+	for d in range(cut, mini(target, depth)):
+		for z in W:
+			for x in W:
+				var i := _idx(x, d, z)
+				var t := types[i]
+				if t != 0 and blocks.defs[t]["ore"] == Data.BEDROCK_BOMB_ORE:
+					cut_eggs.append([t, voxel_center(x, d, z)])
+					types[i] = 0
 	cut = target
 	for k in W * W:
 		if col_top[k] < cut:
