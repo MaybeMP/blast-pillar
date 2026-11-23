@@ -1,7 +1,7 @@
 extends Node
 ## Plays the game's 8-bit sounds. Replace any file in res://sounds/ to change a sound.
 
-const NAMES := ["explode", "explode_big", "land", "drop", "gem", "gem_rare", "buy", "click", "error", "crack", "portal", "unlock", "acid", "freeze"]
+const NAMES := ["explode", "explode_big", "land", "drop", "gem", "gem_rare", "buy", "click", "error", "crack", "portal", "unlock", "acid", "freeze", "tnt_fuse", "slash", "moon_fall"]
 
 var enabled := true
 var players := {}

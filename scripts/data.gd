@@ -210,7 +210,7 @@ const WORLDS := [
 			{"id": "soulrock", "name": "Soulrock", "to": 1.0, "c1": "1a1a22", "c2": "22222e", "hp": 16.0, "style": "obsidian"},
 		],
 		"ores": [
-			{"id": "bone_shard", "name": "Bone Shard", "col": "ece4cc", "min": 0.0, "w": 40, "v": 1.0},
+			{"id": "bone_shard", "name": "Bone Shard", "col": "ece4cc", "min": 0.0, "w": 40, "v": 3.0},
 			{"id": "grave_iron", "name": "Grave Iron", "col": "6a7068", "min": 0.05, "w": 26, "v": 3.0},
 			{"id": "soul_gem", "name": "Soul Gem", "col": "4affd0", "min": 0.3, "w": 12, "v": 10.0},
 			{"id": "ghostlight", "name": "Ghostlight", "col": "c8ffff", "min": 0.55, "w": 6, "v": 30.0},
@@ -289,42 +289,43 @@ const SPECIALS := [
 	{"id": "cluster", "name": "Cluster Bomb", "desc": "Throws 6 bomblets, each 3x a bomb", "cooldown": 30.0,
 		"cost": {"coins": 20000.0, "emerald": 20, "silver": 15}},
 	{"id": "acid", "name": "Acid Bomb", "desc": "Dissolves blocks up to 15 away", "cooldown": 45.0, "min_cooldown": 30.0,
-		"cost": {"coins": 400000.0, "diamond": 30, "topaz": 15}},
+		"cost": {"coins": 400000.0, "diamond": 30, "fossil": 15}},
 	{"id": "mega", "name": "Mega Bomb", "desc": "Breaks everything nearby, however tough", "cooldown": 90.0, "min_cooldown": 15.0,
 		"cost": {"coins": 5.0e6, "ruby": 10, "aurorite": 10, "dragonstone": 10}},
 	# Hidden bombs: found in the bomb cache at the bottom of each world's vault (under the bedrock).
 	{"id": "chain", "name": "Chain Bomb", "desc": "Broken blocks keep exploding", "cooldown": 40.0, "find": 0, "cost": {}},
 	{"id": "freeze", "name": "Freeze Bomb", "desc": "Makes everything nearby brittle", "cooldown": 50.0, "find": 1, "cost": {}},
-	{"id": "sticky", "name": "Sticky Bomb", "desc": "Rains 20 slime balls that stick where they land", "cooldown": 60.0, "find": 2, "cost": {}},
+	{"id": "sticky", "name": "Sticky Bomb", "desc": "Rains 20 slime balls that stick, then each blasts like a Mega Bomb", "cooldown": 60.0, "find": 2, "cost": {}},
 	{"id": "magnet", "name": "Magnet Bomb", "desc": "Rips every nearby ore out of the rock", "cooldown": 60.0, "find": 3, "cost": {}},
 	{"id": "mirror", "name": "Mirror Bomb", "desc": "Copies the last special bomb you fired", "cooldown": 60.0, "find": 4, "cost": {}},
 	{"id": "blackhole", "name": "Black Hole Bomb", "desc": "Swallows a huge sphere", "cooldown": 120.0, "find": 5, "cost": {}},
 	# Rebirth bombs: unlocked for good once you've reborn this many times ("rebirth").
-	{"id": "lightning", "name": "Lightning Bomb", "desc": "Calls down 8 lightning bolts that bore down", "cooldown": 60.0, "rebirth": 3, "cost": {}},
-	{"id": "anchor", "name": "Anchor Bomb", "desc": "Sinks straight down, blasting as it goes", "cooldown": 55.0, "rebirth": 5, "cost": {}},
-	{"id": "overclock", "name": "Overclock Bomb", "desc": "10s of instant fuses and double power", "cooldown": 75.0, "rebirth": 10, "cost": {}},
-	{"id": "phantom", "name": "Phantom Bomb", "desc": "Phases through rock, then blows up deep inside", "cooldown": 70.0, "rebirth": 15, "cost": {}},
-	{"id": "supernova", "name": "Supernova Bomb", "desc": "Charges up, then erupts like a dying star", "cooldown": 150.0, "rebirth": 20, "cost": {}},
+	{"id": "tnt", "name": "TNT Bomb", "desc": "Lights up like TNT, then blows a crater 10 layers deep", "cooldown": 45.0, "rebirth": 3, "cost": {}},
+	{"id": "gold", "name": "Golden Bomb", "desc": "Turns 5 layers above and below into gold, then cashes them in for +10% coins", "cooldown": 90.0, "rebirth": 5, "cost": {}},
+	{"id": "sushi", "name": "Sushi Bomb", "desc": "Summons a giant katana that slices the pillar twice, 20 layers down", "cooldown": 90.0, "rebirth": 10, "cost": {}},
+	{"id": "grow", "name": "Grow Bomb", "desc": "Lands, then for 10 seconds every tap makes its blast 1 block bigger - no limit", "cooldown": 120.0, "rebirth": 15, "cost": {}},
+	{"id": "moon", "name": "Moon Bomb", "desc": "Calls down the moon. It smashes the top half of the pillar", "cooldown": 300.0, "rebirth": 20, "cost": {}},
 ]
 
 ## Relics: found in the vaults at the bottom of Worlds 7-11 ("find" = world index). Permanent
-## bonuses (until you rebirth). Models go in models/relics/<id>.glb.
+## bonuses (until you rebirth). "model" = the file in models/relics/ (two relics can share one),
+## "col" = the shiny metal color it's painted. "keep_white": pure-white texture pixels stay white.
 const RELICS := [
-	{"id": "storm_battery", "name": "Storm Battery", "desc": "Every 10th bomb goes off like a Mega Bomb", "find": 6, "col": "8ac8ff"},
-	{"id": "pearl_of_plenty", "name": "Pearl of Plenty", "desc": "Ores are worth 2x", "find": 7, "col": "f4f0e8"},
-	{"id": "clockwork_gear", "name": "Clockwork Gear", "desc": "Special bomb reloads are 20% shorter", "find": 8, "col": "e0b84a"},
-	{"id": "gale_lens", "name": "Gale Lens", "desc": "Every bomb reaches 1.25x farther", "find": 9, "col": "b0fff0"},
-	{"id": "golden_bomb", "name": "Golden Bomb", "desc": "Every bomb does 1.5x damage", "find": 10, "col": "ffcf5a"},
+	{"id": "storm_battery", "name": "Storm Battery", "desc": "Every 20th bomb you drop is a Mega Bomb", "find": 6, "col": "e8343a", "model": "mega", "keep_white": true},
+	{"id": "pearl_of_plenty", "name": "Pearl of Plenty", "desc": "Ores are worth 2x", "find": 7, "col": "36d46a", "model": "ore"},
+	{"id": "clockwork_gear", "name": "Clockwork Gear", "desc": "Special bomb reloads are 20% shorter", "find": 8, "col": "7cc8ff", "model": "clock"},
+	{"id": "gale_lens", "name": "Gale Lens", "desc": "Every bomb reaches 1.25x farther", "find": 9, "col": "b4bac6", "model": "reach"},
+	{"id": "golden_bomb", "name": "Golden Trophy", "desc": "Every bomb does 1.5x damage", "find": 10, "col": "ffc533", "model": "mega"},
 ]
 const RANGE_RELIC_MULT := 1.25
 const ORE_RELIC_MULT := 2.0
 const RELOAD_RELIC_MULT := 0.8
-const STORM_EVERY := 10
+const STORM_EVERY := 20
 const GOLDEN_RELIC_MULT := 1.5
 
 ## Rebirth: breaking the Star Core at the bottom of the Starforge's vault lets you start over.
-## Each rebirth adds this much damage (+25% per rebirth, added up, not compounding).
-const REBIRTH_DAMAGE := 0.25
+## Rebirth damage multiplier = this x rebirths (x10, x20, x30...). Worlds 1-6 only.
+const REBIRTH_MULT := 10.0
 ## The world whose vault holds the Star Core.
 const STAR_CORE_WORLD := 11
 
@@ -337,13 +338,16 @@ static func get_relic(id: String) -> Dictionary:
 ## Under every pillar: one layer of bedrock, then a vault this many layers deep, then a bedrock
 ## floor. Worlds 1-6 have a bomb cache at the bottom of the vault; the realms (7+) don't.
 const VAULT_LAYERS := 25
-## Bedrock Bomb: one-time use, breaks the bedrock of the world you're in.
-## Always costs this many of World 6's treasure (the Cosmic Egg), whichever world you use it in.
-const BEDROCK_BOMB_COST := 2
+## Bedrock Bomb: one-time use, breaks the bedrock of the world you're in. Paid in Cosmic Eggs.
 const BEDROCK_BOMB_ORE := "cosmic_egg"
-## Cosmic Eggs aren't in the pillar and can't be bought or sold: you get this many every time you
-## reach the bottom of World 6 (reset it to go again).
-const EGGS_PER_RUN := 1
+## Cosmic Eggs are buried in every world's pillar: this many per world, each time you dig it (a
+## reset buries a fresh batch). They can't be bought or sold.
+const EGGS_PER_WORLD := [5, 5, 5, 10, 10, 10, 10, 10, 10, 10, 10, 10]
+
+## A world's Bedrock Bomb costs what two digs of that world turn up, rounded to a tidy 5/10/20...
+static func bedrock_cost(w: int) -> int:
+	var raw := 2 * int(EGGS_PER_WORLD[clampi(w, 0, EGGS_PER_WORLD.size() - 1)])
+	return maxi(5, int(round(raw / 5.0)) * 5)
 
 ## Acid bomb: how far the acid spreads (in blocks) and how long it takes.
 const ACID_RADIUS_BLOCKS := 15
@@ -364,17 +368,17 @@ const BOMB_KINDS := {
 	"mega": {"radius": 1.0, "power": 3.0, "color": "b0142a"},     # breaks like acid, 10 blocks reach (see game.gd)
 	"chain": {"radius": 1.0, "power": 1.5, "color": "8a8f99"},
 	"freeze": {"radius": 1.0, "power": 1.0, "color": "8fe6ff"},
-	"sticky": {"radius": 1.0, "power": 1.0, "color": "6fd24a"},   # each slime ball = a normal bomb
+	"sticky": {"radius": 1.0, "power": 1.0, "color": "6fd24a"},   # each slime ball blasts like a Mega Bomb (game.gd)
 	"magnet": {"radius": 1.0, "power": 1.0, "color": "d23a3a"},
 	"mirror": {"radius": 1.6, "power": 3.0, "color": "1a1a1a"},   # nothing fired yet: a plain big blast
 	"blackhole": {"radius": 1.0, "power": 1.0, "color": "2a1040"},
 	"bedrock": {"radius": 1.0, "power": 1.0, "color": "3a3a3a"},
 	"spore": {"radius": 0.8, "power": 1.5, "color": "b07ad0"},
-	"anchor": {"radius": 1.6, "power": 3.0, "color": "4a5a6a"},
-	"overclock": {"radius": 1.2, "power": 2.0, "color": "e0b84a"},
-	"lightning": {"radius": 1.0, "power": 2.0, "color": "fff04a"},
-	"phantom": {"radius": 3.0, "power": 6.0, "color": "c8ffff"},
-	"supernova": {"radius": 5.0, "power": 8.0, "color": "ffb04a"},
+	"tnt": {"radius": 1.0, "power": 1.0, "color": "d93a2a"},      # crater 10 layers deep (game.gd)
+	"gold": {"radius": 1.0, "power": 1.0, "color": "ffc533"},     # gold rush (game.gd)
+	"sushi": {"radius": 1.0, "power": 1.0, "color": "f07a4a"},    # the katana: two giant slashes (game.gd)
+	"grow": {"radius": 1.0, "power": 1.0, "color": "7ad94a"},     # tap-charged blast (game.gd)
+	"moon": {"radius": 1.0, "power": 1.0, "color": "9a9aa6"},     # smashes the top half (game.gd)
 }
 
 

@@ -9,6 +9,7 @@ const BombScript = preload("res://scripts/bomb.gd")
 const FxScript = preload("res://scripts/fx.gd")
 const GemScript = preload("res://scripts/gem.gd")
 const SfxScript = preload("res://scripts/sfx.gd")
+const LoadingScript = preload("res://scripts/loading.gd")
 const UIScript = preload("res://scripts/ui.gd")
 
 const SAVE_PATH := "user://blast_pillar_save.json"
@@ -33,11 +34,18 @@ var relics := {}                 # relic id -> true (found in the vaults of Worl
 var rebirths := 0                # how many times you've reborn (kept through rebirths)
 var rebirth_ready := false       # the Star Core was broken this run, so you can rebirth
 var just_reborn := false         # show the "you reborn" popup once the game has loaded
-var storm_count := 0             # Storm Battery: counts normal bombs going off
+var storm_count := 0             # Storm Battery: counts normal bombs dropped
 var cooldowns := {}
 var sound_on := true
 var vibrate_on := true
 var show_stats := false
+var loading_screen: Node = null
+var loading_open := false        # the loading / START screen is up (notifications wait for it)
+var reduce_flash := false        # settings: no full-screen flashes, softer tints, no camera shake
+## Lifetime numbers for the STATS page. Kept through rebirths.
+var stats := {}
+var hints_seen := {}             # first-time guide notes already shown
+var hide_early_worlds := false   # WORLDS tab: Worlds 1-5 folded away
 var _prof := {}                # this frame: section -> microseconds
 var last_hitch := ""           # breakdown of the last frame that took over 100 ms
 
@@ -96,8 +104,18 @@ func _ready() -> void:
 	for w in Data.WORLDS.size():
 		worlds.append(_new_world_entry())
 	var offline_seconds := load_game()
+	var loading = null
+	loading_open = DisplayServer.get_name() != "headless" and not quick_restart
+	quick_restart = false
+	if loading_open:
+		loading = LoadingScript.new()     # bombs spinning in a checkerboard while it loads
+		loading_screen = loading
+		add_child(loading)
+		loading.setup(self)
 	_load_world(current_world)
 	await _render_icons()
+	if loading:
+		loading.fill_icons()
 	var layer := CanvasLayer.new()
 	add_child(layer)
 	ui = UIScript.new()
@@ -112,6 +130,8 @@ func _ready() -> void:
 	if just_reborn:
 		just_reborn = false
 		_reborn_popup()
+	if loading:
+		loading.finish()
 
 
 func _compute_layout() -> void:
@@ -224,11 +244,19 @@ func travel(w: int) -> void:
 		return
 	worlds[current_world]["state"] = pillar.get_state()
 	worlds[current_world]["depth"] = pillar.floor_depth()
+	_refund_falling_bedrock_bombs()
 	sfx.play("portal")
 	_load_world(w)
 	save_game()
 	ui.rebuild_tab()
 	ui.refresh()
+
+
+## Leaving a world while a Bedrock Bomb is still falling gives you its Cosmic Eggs back.
+func _refund_falling_bedrock_bombs() -> void:
+	for b in bombs_node.get_children():
+		if b.get("kind") == "bedrock" and not b.get("exploded"):
+			ores[Data.BEDROCK_BOMB_ORE] = int(ores.get(Data.BEDROCK_BOMB_ORE, 0)) + Data.bedrock_cost(current_world)
 
 
 ## Regrow a fresh pillar in a world you've already broken through.
@@ -241,6 +269,7 @@ func reset_world(w: int) -> void:
 	worlds[w].erase("bedrock_broken")
 	worlds[w]["empty"] = false
 	if w == current_world:
+		_refund_falling_bedrock_bombs()
 		_load_world(w)
 	sfx.play("portal", 0.8)
 	save_game()
@@ -283,21 +312,96 @@ func _update_portal() -> void:
 	sh.code = """
 shader_type spatial;
 render_mode unshaded, cull_disabled;
+uniform bool locked = false;
 void fragment() {
 	vec2 uv = floor(UV * vec2(16.0, 24.0)) / vec2(16.0, 24.0) - 0.5;
 	uv.y *= 1.5;
 	float a = atan(uv.y, uv.x);
 	float r = length(uv);
-	float swirl = sin(a * 3.0 + r * 18.0 - TIME * 4.0) * 0.5 + 0.5;
+	float swirl = sin(a * 3.0 + r * 18.0 - TIME * (locked ? 0.8 : 4.0)) * 0.5 + 0.5;
 	vec3 c = mix(vec3(0.3, 0.08, 0.6), vec3(0.65, 0.3, 1.0), step(0.5, swirl));
 	c = mix(c, vec3(0.9, 0.75, 1.0), step(r, 0.12) * 0.6);
+	if (locked) {
+		c = mix(vec3(dot(c, vec3(0.33))), c, 0.3) * 0.55;   // sealed: dull, slow and grey
+	}
 	ALBEDO = c;
 }
 """
 	var qmat := ShaderMaterial.new()
 	qmat.shader = sh
+	qmat.set_shader_parameter("locked", portal_locked())
 	quad.material_override = qmat
 	portal_node.add_child(quad)
+	if portal_locked():
+		portal_node.add_child(_portal_lock())
+
+
+## The next world is sealed until you find the hidden bomb it needs.
+func portal_locked() -> bool:
+	var nxt := current_world + 1
+	return nxt < Data.WORLDS.size() and nxt >= unlocked_worlds
+
+
+## Two iron chains crossed over the opening with a gold padlock in the middle.
+func _portal_lock() -> Node3D:
+	var lock := Node3D.new()
+	var z := Data.VOXEL * 0.5 + 0.06
+	var cy := Data.VOXEL + PORTAL_H * 0.5
+	var iron := StandardMaterial3D.new()
+	iron.albedo_color = Color("6a6f78")
+	iron.metallic = 0.6
+	iron.roughness = 0.45
+	var iron_dark := StandardMaterial3D.new()
+	iron_dark.albedo_color = Color("3c4048")
+	iron_dark.metallic = 0.6
+	iron_dark.roughness = 0.5
+	var gold := StandardMaterial3D.new()
+	gold.albedo_color = Color("e8b83a")
+	gold.metallic = 0.7
+	gold.roughness = 0.3
+	var hole := StandardMaterial3D.new()
+	hole.albedo_color = Color("1a1208")
+	var half := Vector2(PORTAL_W * 0.5 + Data.VOXEL * 0.6, PORTAL_H * 0.5 + Data.VOXEL * 0.6)
+	for side in [-1.0, 1.0]:
+		var a := Vector3(-half.x * side, cy - half.y, z)
+		var b := Vector3(half.x * side, cy + half.y, z)
+		var links := 13
+		for i in links:
+			var t := (i + 0.5) / links
+			var link := MeshInstance3D.new()
+			var bm := BoxMesh.new()
+			var flat := i % 2 == 0
+			bm.size = Vector3(0.2, 0.09, 0.03) if flat else Vector3(0.2, 0.03, 0.09)
+			link.mesh = bm
+			link.material_override = iron if flat else iron_dark
+			link.position = a.lerp(b, t) + Vector3(0, 0, 0.02 * side)
+			link.rotation.z = atan2(b.y - a.y, b.x - a.x)
+			lock.add_child(link)
+	var body := MeshInstance3D.new()
+	var bb := BoxMesh.new()
+	bb.size = Vector3(0.34, 0.28, 0.1)
+	body.mesh = bb
+	body.material_override = gold
+	body.position = Vector3(0, cy - 0.06, z + 0.07)
+	lock.add_child(body)
+	for p in [[Vector3(-0.1, cy + 0.15, z + 0.07), Vector3(0.05, 0.16, 0.05)],
+			[Vector3(0.1, cy + 0.15, z + 0.07), Vector3(0.05, 0.16, 0.05)],
+			[Vector3(0, cy + 0.235, z + 0.07), Vector3(0.25, 0.05, 0.05)]]:
+		var s := MeshInstance3D.new()
+		var sm := BoxMesh.new()
+		sm.size = p[1]
+		s.mesh = sm
+		s.material_override = iron
+		s.position = p[0]
+		lock.add_child(s)
+	var key := MeshInstance3D.new()
+	var km := BoxMesh.new()
+	km.size = Vector3(0.05, 0.1, 0.02)
+	key.mesh = km
+	key.material_override = hole
+	key.position = Vector3(0, cy - 0.08, z + 0.125)
+	lock.add_child(key)
+	return lock
 
 
 ## A mesh of whole blocks (pillar-style faces and shading) at integer cells; cell (0,0,0) spans
@@ -355,9 +459,8 @@ func _check_progress() -> void:
 		_update_portal()
 		var first_time: bool = not worlds[current_world]["done"]
 		worlds[current_world]["done"] = true
+		stat("bottoms")
 		sfx.play("portal", 1.0, 0.0, 0.5)
-		if Data.WORLDS[current_world]["treasure"]["id"] == Data.BEDROCK_BOMB_ORE:
-			_grant_eggs(first_time)
 		if not first_time:
 			return
 		var w := current_world
@@ -366,17 +469,17 @@ func _check_progress() -> void:
 			# the next world is a realm whose door needs a hidden bomb you don't have yet
 			var need := world_needs(w + 1)
 			var home := special_home(need)
-			ui.show_popup("YOU HIT BEDROCK!",
-				"You blasted all the way down %s.\n\nThe portal to [color=#ffcf5a]%s[/color] is sealed. It opens once you find the [color=#b46bff]%s[/color], hidden under the bedrock of %s." % [Data.WORLDS[w]["name"], Data.WORLDS[w + 1]["name"], special_name(need), Data.WORLDS[home]["name"]],
-				[["OK", Callable(), "gold"]], ui.world_icon(w, 5))
+			ui.notify("YOU HIT BEDROCK!",
+				"The portal to [color=#ffcf5a]%s[/color] is sealed. Find the [color=#b46bff]%s[/color] under the bedrock of %s to open it." % [Data.WORLDS[w + 1]["name"], special_name(need), Data.WORLDS[home]["name"]],
+				ui.world_icon(w, 3), ["world", str(w)], Callable(), 7.0)
 		elif w + 1 < Data.WORLDS.size():
 			var next_name: String = Data.WORLDS[w + 1]["name"]
-			ui.show_popup("YOU HIT BEDROCK!",
-				"You blasted all the way down %s.\nA portal to [color=#ffcf5a]%s[/color] opened on the back wall!\n\nSomething is hidden under the bedrock...\nYou can always come back from the WORLDS tab." % [Data.WORLDS[w]["name"], next_name],
-				[["STAY", Callable(), "gold"], ["ENTER PORTAL", func(): travel(w + 1), "green"]], ui.world_icon(w + 1, 5))
+			ui.notify("YOU HIT BEDROCK!",
+				"A portal to [color=#ffcf5a]%s[/color] opened! [color=#9be36b]Tap here to go through.[/color]" % next_name,
+				ui.world_icon(w + 1, 3), ["world", str(w + 1)], func(): travel(w + 1), 8.0)
 		else:
-			ui.show_popup("YOU CONQUERED IT ALL!", "Every pillar in every world and every realm has been blasted down to bedrock. Legendary.\n\nHave you found every hidden bomb?",
-				[["NICE", Callable(), "green"]], ui.micon("bombs", "mega", "mega", 5), ["bombs", "mega"])
+			ui.notify("YOU CONQUERED IT ALL!", "Every pillar in every world is blasted down to bedrock. Legendary!",
+				ui.micon("bombs", "mega", "mega", 3), ["bombs", "mega"], Callable(), 7.0)
 		ui.rebuild_tab()
 		save_game()
 
@@ -395,15 +498,23 @@ func blast_radius() -> float:
 func range_mult() -> float:
 	return Data.RANGE_RELIC_MULT if has_relic("gale_lens") else 1.0
 
+## Bomb damage. The rebirth multiplier only counts in Worlds 1-6; the Deep Realms ignore it.
 func bomb_power() -> float:
-	var p := 2.5 * pow(1.28, lvl("power")) * rebirth_mult()
+	var p := base_bomb_power()
+	if not is_realm(current_world):
+		p *= rebirth_mult()
+	return p
+
+## Bomb damage without the rebirth multiplier (upgrades and relics only).
+func base_bomb_power() -> float:
+	var p := 2.5 * pow(1.28, lvl("power"))
 	if has_relic("golden_bomb"):
 		p *= Data.GOLDEN_RELIC_MULT
 	return p
 
-## +25% damage for every rebirth (added up: 4 rebirths = 2x).
+## Rebirth damage: x10 after 1 rebirth, x20 after 2, x30 after 3...
 func rebirth_mult() -> float:
-	return 1.0 + Data.REBIRTH_DAMAGE * rebirths
+	return maxf(1.0, Data.REBIRTH_MULT * rebirths)
 
 func has_relic(id: String) -> bool:
 	return relics.has(id)
@@ -420,15 +531,21 @@ func value_mult() -> float:
 func auto_rate(w: int) -> float:
 	return 0.25 * int(worlds[w]["auto"])
 
+## Rebirth coin boost: x2 after 1 rebirth, x3 after 2, x4 after 3... in every world.
+func rebirth_coin_mult() -> float:
+	return 1.0 + rebirths
+
 func ore_value(oid: String) -> float:
-	var v := float(ore_table[oid]["value"]) * value_mult() * coin_scale(int(ore_table[oid]["world"]))
+	if oid == Data.BEDROCK_BOMB_ORE:
+		return 0.0   # Cosmic Eggs pay out in Bedrock Bombs, not coins
+	var v := float(ore_table[oid]["value"]) * value_mult() * coin_scale(int(ore_table[oid]["world"])) * rebirth_coin_mult()
 	return v * (Data.ORE_RELIC_MULT if has_relic("pearl_of_plenty") else 1.0)
 
 
 # ---- The Deep Realms (worlds 7+) -------------------------------------------------------------
 ## How much tougher a realm is than its base numbers, relative to your bombs when you first enter.
 ## Tuned so that walking into a realm feels like starting Grasslands on day one.
-const REALM_TOUGHNESS := 0.6
+const REALM_TOUGHNESS := 0.3
 ## Coins per block in a realm are scaled so your cheapest upgrade costs about as many blocks as
 ## it did on day one in Grasslands.
 const REALM_COINS := 1.0
@@ -457,8 +574,8 @@ func _scale_realm(w: int) -> void:
 	if not is_realm(w) or worlds[w].has("hp_scale"):
 		return
 	var r := minf(blast_radius(), 3.0)
-	# rebirth damage isn't counted, so rebirths make the realms easier
-	worlds[w]["hp_scale"] = maxf(1.0, bomb_power() / rebirth_mult() / 2.5 * float(bombs_per_tap()) * r * r * REALM_TOUGHNESS)
+	# rebirth damage doesn't count in the realms, so it isn't counted here either
+	worlds[w]["hp_scale"] = maxf(1.0, base_bomb_power() / 2.5 * float(bombs_per_tap()) * r * r * REALM_TOUGHNESS)
 	worlds[w]["realm_t"] = REALM_TOUGHNESS
 	# your cheapest upgrade should cost about as many blocks as it did on day one in Grasslands
 	var ref := INF
@@ -499,6 +616,8 @@ func _try_unlock() -> Array:
 			break
 		unlocked_worlds += 1
 		opened.append(nxt)
+	if not opened.is_empty() and portal_node:
+		_update_portal()   # this world's portal may have just been unlocked
 	return opened
 
 func upgrade_effect(id: String) -> String:
@@ -507,13 +626,13 @@ func upgrade_effect(id: String) -> String:
 		"power":
 			var extra := ""
 			if rebirths > 0:
-				extra += "  rebirth x%.2f" % rebirth_mult()
+				extra += ("  rebirth x%s" % fmt(rebirth_mult())) if not is_realm(current_world) else "  (no rebirth bonus here)"
 			if has_relic("golden_bomb"):
 				extra += "  golden x%.1f" % Data.GOLDEN_RELIC_MULT
 			return "%s power%s" % [fmt(bomb_power()), extra]
 		"multi": return ("%d bombs per tap" if bombs_per_tap() > 1 else "%d bomb per tap") % bombs_per_tap()
 		"fuse": return "%.2fs fuse" % fuse_time()
-		"value": return "x%s ore coins" % fmt(value_mult())
+		"value": return ("x%s ore coins" % fmt(value_mult())) + ("  rebirth x%d" % int(rebirth_coin_mult()) if rebirths > 0 else "")
 	return ""
 
 func upgrade_cost(u: Dictionary) -> float:
@@ -552,6 +671,7 @@ func _pay(cost: Dictionary) -> void:
 func add_coins(amount: float) -> void:
 	coins += amount
 	total_coins += amount
+	stat("coins", amount)
 
 func buy_upgrade(id: String) -> void:
 	var u: Dictionary = {}
@@ -617,6 +737,24 @@ func upgrade_special(id: String) -> void:
 	ui.refresh()
 
 
+## Tell the player (once) when they can afford a bomb they haven't bought yet.
+var afford_timer := 1.0
+var afford_told := {}
+
+func _check_new_bombs() -> void:
+	for sp in Data.SPECIALS:
+		var id: String = sp["id"]
+		if sp.has("find") or sp.has("rebirth") or specials.has(id) or afford_told.has(id):
+			continue
+		var cost: Dictionary = sp.get("cost", {})
+		if cost.is_empty() or not can_afford(cost):
+			continue
+		afford_told[id] = true
+		sfx.play("gem_rare", 1.2, -4.0)
+		ui.notify("NEW BOMB AVAILABLE!", "You can unlock the [color=#b46bff]%s[/color]. [color=#9be36b]Tap to open BOMBS.[/color]" % sp["name"],
+			ui.micon("bombs", id, id, 3), ["bombs", id], func(): ui.switch_tab("bombs"), 6.0)
+
+
 func unlock_special(id: String) -> void:
 	var s := Data.get_special(id)
 	if s.is_empty() or specials.has(id) or s.has("find") or s.has("rebirth"):
@@ -641,6 +779,8 @@ func fire_special(id: String) -> void:
 			return
 		mirror_payload = mirror_copy
 		mirror_copy = ""
+	stat("specials")
+	hint("special_used")
 	# the Mirror Bomb reloads as long as the bomb it just copied does
 	cooldowns[id] = special_cooldown(mirror_payload if id == "mirror" else id)
 	if id in MIRRORABLE:
@@ -650,26 +790,45 @@ func fire_special(id: String) -> void:
 		sfx.play("drop", 1.3)
 		ui.refresh()
 		return
+	if id == "moon":
+		_moon_strike()
+		ui.refresh()
+		return
 	_spawn_bomb(id, _spawn_point(0.6))
 	sfx.play("drop", 0.8)
 	ui.refresh()
 
 ## Buy/sell ores one at a time. Both use the same price: what the ore earns when you mine it.
-## Cosmic Eggs only come from reaching the bottom of World 6.
+## Cosmic Eggs are dug up, never bought or sold.
 func ore_tradable(oid: String) -> bool:
 	return oid != Data.BEDROCK_BOMB_ORE
 
 
-func _grant_eggs(first_time: bool) -> void:
+## Dug up Cosmic Egg(s) (already added to your ores): a flash, fireworks where it was, chimes, a
+## buzz, and a glowing notification saying how close you are to the next Bedrock Bomb.
+func _eggs_found(n: int, where: Vector3) -> void:
 	var eid: String = Data.BEDROCK_BOMB_ORE
-	ores[eid] = int(ores.get(eid, 0)) + Data.EGGS_PER_RUN
-	ores_seen[eid] = true
-	ui.toast_ore(eid, Data.EGGS_PER_RUN)
-	if not first_time:
-		# the first time, the "you hit bedrock" popup is enough; after a reset, say what you got
-		ui.show_popup("+%d COSMIC EGG" % Data.EGGS_PER_RUN,
-			"You reached the bottom of %s again.\n%d Cosmic Eggs make a Bedrock Bomb (BOMBS tab).\nYou have %d." % [Data.WORLDS[current_world]["name"], Data.BEDROCK_BOMB_COST, int(ores[eid])],
-			[["NICE", Callable(), "green"]], ui.micon("ores", eid, "gem", 5, ore_table[eid]["color"]), ["ores", eid])
+	stat("eggs", n)
+	var have := int(ores.get(eid, 0))
+	var egg_col: Color = ore_table[eid]["color"]
+	ui.flash(Color(egg_col.r, egg_col.g, egg_col.b, 0.4), 0.5)
+	fx.explosion(where, 1.6, egg_col)
+	fx.explosion(where, 1.0, Color(1.0, 0.85, 0.3))
+	fx.shockwave(where, 2.5, [egg_col, Color(1.0, 0.9, 0.5), Color.WHITE])
+	shake = maxf(shake, 0.35)
+	_vibrate(90)
+	sfx.play("unlock", 1.2, 0.0)
+	sfx.play("gem_rare", 0.8, 0.0)
+	var body := "You have [color=#ffcf5a]%d[/color]. " % have
+	var nb := next_bedrock_world()
+	if nb >= 0:
+		var cost := Data.bedrock_cost(nb)
+		if have >= cost:
+			body += "That's enough to break the bedrock of [color=#ffcf5a]%s[/color]! [color=#9be36b]Tap to open BOMBS.[/color]" % Data.WORLDS[nb]["name"]
+		else:
+			body += "[color=#ffcf5a]%d[/color] more to break the bedrock of %s." % [cost - have, Data.WORLDS[nb]["name"]]
+	ui.notify("COSMIC EGG!" if n == 1 else "%d COSMIC EGGS!" % n, body, ui.micon("ores", eid, "gem", 4, egg_col), ["ores", eid],
+		func(): ui.switch_tab("bombs"), 6.0, true)
 	save_game()
 
 
@@ -721,10 +880,15 @@ func _unhandled_input(event: InputEvent) -> void:
 
 
 func _tap_drop() -> void:
+	if grow_charging():
+		_grow_tap()
+		return
 	if bombs_node.get_child_count() >= MAX_BOMBS:
 		return
 	for i in bombs_per_tap():
 		_spawn_bomb("bomb", _spawn_point(1.0))
+	stat("taps")
+	stat("bombs", bombs_per_tap())
 	sfx.play("drop", randf_range(0.95, 1.1), -4.0)
 	_vibrate(8)
 	if ui.hint_label.visible:
@@ -745,6 +909,11 @@ func _spawn_point(spread: float) -> Vector3:
 func _spawn_bomb(kind: String, pos: Vector3, vel := Vector3(0, -3, 0), lit := -1.0) -> void:
 	if bombs_node.get_child_count() >= MAX_BOMBS + 10:
 		return
+	if kind == "bomb" and has_relic("storm_battery"):
+		# Storm Battery: every Nth normal bomb drops as a Mega Bomb (looks and blasts like one)
+		storm_count += 1
+		if storm_count % Data.STORM_EVERY == 0:
+			kind = "mega"
 	var __t := Time.get_ticks_usec()
 	_spawn_bomb_now(kind, pos, vel, lit)
 	prof("new bombs", __t)
@@ -755,8 +924,8 @@ func _spawn_bomb_now(kind: String, pos: Vector3, vel := Vector3(0, -3, 0), lit :
 	b.game = self
 	b.kind = kind
 	b.fuse = fuse_time() if kind != "mini" else 0.2
-	if overclocked() and kind == "bomb":
-		b.fuse = 0.05
+	if kind == "tnt":
+		b.fuse = TNT_FUSE   # a TNT fuse always burns the same time, like in Minecraft
 	b.position = pos
 	b.linear_velocity = vel
 	bombs_node.add_child(b)
@@ -769,8 +938,6 @@ func on_bomb_explode(bomb) -> void:
 	var k: Dictionary = Data.BOMB_KINDS.get(kind, Data.BOMB_KINDS["bomb"])
 	var radius := blast_radius() * float(k["radius"])
 	var power := bomb_power() * float(k["power"])
-	if overclocked():
-		power *= 2.0
 	var pos: Vector3 = bomb.global_position
 	match kind:
 		"drill":
@@ -790,8 +957,8 @@ func on_bomb_explode(bomb) -> void:
 				_spawn_bomb("mini", start, v)
 		"acid":
 			_acid(pos)
-		"mega":
-			_mega(pos)
+		"mega", "sticky":
+			_mega(pos)   # each Sticky Bomb slime ball blasts like a whole Mega Bomb
 		"chain":
 			_chain(pos, radius, power)
 		"freeze":
@@ -806,22 +973,16 @@ func on_bomb_explode(bomb) -> void:
 			_break_bedrock()
 		"spore":
 			_spore(pos, radius, power)
-		"anchor":
-			_anchor(pos, radius, power)
-		"overclock":
-			_overclock(pos, radius, power)
-		"lightning":
-			_lightning(pos, power)
-		"phantom":
-			_phantom(pos, radius, power)
-		"supernova":
-			_supernova(pos, radius, power)
-		"bomb":
-			storm_count += 1
-			if has_relic("storm_battery") and storm_count % Data.STORM_EVERY == 0:
-				_mega(pos)
-			else:
-				_blast(pos, radius, power)
+		"tnt":
+			_tnt(pos)
+		"gold":
+			_golden(pos)
+		"sushi":
+			_sword()
+		"grow":
+			_grow_blast(pos)
+		"moon":
+			_moon_strike()
 		_:
 			_blast(pos, radius, power)
 
@@ -935,13 +1096,15 @@ func _magnet(pos: Vector3) -> void:
 	shake = maxf(shake, 0.25)
 
 
-const RENAMED_SPECIALS := {"prism": "mirror", "quake": "sticky"}
+const RENAMED_SPECIALS := {"prism": "mirror", "quake": "sticky",
+	"lightning": "tnt", "anchor": "gold", "overclock": "sushi", "supernova": "moon", "sword": "sushi", "golden": "gold",
+	"phantom": "grow"}
 
 ## Mirror Bomb: becomes a copy of the last special bomb you fired, right where it lands.
 ## (Drills land and bore as usual; everything else goes off on the spot.) It needs a special
 ## fired since it was last used - until then it stays locked, even when its reload is done.
 const MIRRORABLE := ["drill", "cluster", "acid", "mega", "chain", "freeze", "sticky", "magnet", "blackhole",
-	"spore", "anchor", "overclock", "lightning", "phantom", "supernova"]
+	"spore", "tnt", "gold", "sushi", "moon"]
 var mirror_copy := ""        # special fired since the Mirror Bomb was last used ("" = locked)
 var mirror_payload := ""     # what the Mirror Bomb that's falling right now will become
 
@@ -1053,83 +1216,386 @@ func _spore(pos: Vector3, radius: float, power: float) -> void:
 		await get_tree().create_timer(0.12).timeout
 
 
-## Anchor Bomb: sinks straight down through 24 layers, blasting every 2 layers.
-func _anchor(pos: Vector3, radius: float, power: float) -> void:
+## TNT Bomb (3 rebirths): lands, hops, hisses and flashes white like Minecraft TNT (bomb.gd),
+## then blows a crater TNT_LAYERS deep, breaking everything in it however tough.
+const TNT_FUSE := 3.0
+const TNT_LAYERS := 10
+
+func _tnt(pos: Vector3) -> void:
+	var r := (TNT_LAYERS * 0.5 + 0.5) * Data.VOXEL
+	var center := pos + Vector3(0, -(TNT_LAYERS * 0.5 - 1.0) * Data.VOXEL, 0)
+	_apply(pillar.dissolve(center, r, 0.5), center)
+	fx.explosion(pos, 3.5, Color(1.0, 0.62, 0.2))
+	fx.explosion(center, 3.0, Color(0.95, 0.85, 0.75))
+	fx.shockwave(pos, 3.5, [Color(1.0, 0.7, 0.3), Color(0.9, 0.9, 0.9), Color(0.5, 0.5, 0.5)])
+	sfx.play("explode_big", 0.85, 4.0, 0.05)
+	sfx.play("explode", 0.7, 2.0, 0.05)
+	shake = maxf(shake, 1.1)
+	_vibrate(90)
+
+
+## Golden Bomb (5 rebirths): every block from GOLD_LAYERS above to GOLD_LAYERS below where it
+## lands turns to pure gold for a moment, then it all breaks and pays out: the blocks' own ores
+## and coins, plus GOLD_BONUS of the coins you had (so you end up with about 1.1x).
+const GOLD_LAYERS := 5
+const GOLD_BONUS := 0.1
+const GOLD_SHOW := 1.0      # seconds the gold stays before it cashes in
+
+func _golden(pos: Vector3) -> void:
 	var token := world_token
-	var p := pos
-	sfx.play("explode_big", 0.7, -2.0, 0.1)
-	for i in 12:
-		if token != world_token or not is_inside_tree():
-			return
-		_blast(p, radius, power, Color(0.5, 0.7, 0.9), i == 0, i > 0)
-		p.y -= 2.0 * Data.VOXEL
-		shake = maxf(shake, 0.25)
-		await get_tree().create_timer(0.09).timeout
-
-
-## Overclock Bomb: for OVERCLOCK_SECONDS every bomb you drop has an instant fuse and double power.
-const OVERCLOCK_SECONDS := 10.0
-var overclock_until := 0
-
-func overclocked() -> bool:
-	return Time.get_ticks_msec() < overclock_until
-
-func overclock_left() -> float:
-	return maxf(0.0, (overclock_until - Time.get_ticks_msec()) / 1000.0)
-
-func _overclock(pos: Vector3, radius: float, power: float) -> void:
-	_blast(pos, radius, power, Color(1.0, 0.8, 0.3), true)
-	overclock_until = Time.get_ticks_msec() + int(OVERCLOCK_SECONDS * 1000.0)
-	sfx.play("unlock", 1.4, 0.0, 0.1)
-
-
-## Lightning Bomb: 8 bolts hit random columns one after another, each boring 10 layers down.
-func _lightning(pos: Vector3, power: float) -> void:
-	var token := world_token
-	_blast(pos, 0.8, power, Color(1.0, 0.95, 0.4), false, true)
-	for bolt in 8:
-		if token != world_token or not is_inside_tree():
-			return
-		var top: Vector3 = pillar.high_point(1)
-		var from := Vector3(top.x, top.y + 6.0, top.z)
-		fx.streak(from, top, Color("fff04a"))
-		for j in 10:
-			var p := top + Vector3(0, -j * Data.VOXEL, 0)
-			_apply(pillar.explode(p, 0.7, power * 2.0), p)
-			if j % 3 == 0:
-				fx.beam(p, Color("fff8a0"))
-		sfx.play("crack", 1.6, 0.0, 0.05)
-		shake = maxf(shake, 0.35)
-		await get_tree().create_timer(0.15).timeout
-
-
-## Phantom Bomb: passes through 12 layers of rock like a ghost, then a huge blast deep inside.
-func _phantom(pos: Vector3, radius: float, power: float) -> void:
-	var token := world_token
-	var deep := pos + Vector3(0, -12.0 * Data.VOXEL, 0)
-	fx.streak(pos, deep, Color("c8ffff"))
-	sfx.play("portal", 1.6, -2.0, 0.1)
-	await get_tree().create_timer(0.5).timeout
+	var mid: int = pillar.layer_at(pos)
+	var cells: Array = pillar.cells_in_layers(mid - GOLD_LAYERS, mid + GOLD_LAYERS + 1)
+	fx.explosion(pos, 1.2, Color(1.0, 0.85, 0.3))
+	if cells.is_empty():
+		return
+	pillar.paint_cells(cells, blocks.index_of("gold_block"))
+	fx.shockwave(pos, 5.0, [Color(1.0, 0.95, 0.6), Color(1.0, 0.82, 0.25), Color.WHITE])
+	ui.flash(Color(1.0, 0.85, 0.3, 0.35), 0.6)
+	sfx.play("unlock", 0.8, 3.0, 0.05)
+	sfx.play("gem_rare", 1.2, 2.0, 0.05)
+	_vibrate(60)
+	await get_tree().create_timer(GOLD_SHOW).timeout
 	if token != world_token or not is_inside_tree():
 		return
-	_blast(deep, radius, power, Color(0.7, 1.0, 1.0), true)
+	var bonus := coins * GOLD_BONUS
+	var res: Dictionary = pillar.break_cells(cells)
+	# glittering gold chunks fly off as it all breaks
+	for i in mini(70, res["broken"].size()):
+		var e: Array = res["broken"][randi() % res["broken"].size()]
+		fx.debris(e[1], Color(1.0, 0.82, 0.25) if randf() < 0.7 else Color(1.0, 0.97, 0.75), pos)
+	_apply(res, pos, false)
+	if bonus > 0.0:
+		add_coins(bonus)
+	fx.explosion(pos, 3.0, Color(1.0, 0.85, 0.3))
+	sfx.play("buy", 1.0, 3.0, 0.05)
+	sfx.play("gem_rare", 0.9, 3.0, 0.05)
+	sfx.play("explode_big", 1.3, -2.0, 0.05)
+	shake = maxf(shake, 0.6)
+	ui.notify("GOLD RUSH!", "+[color=#ffcf5a]%s coins[/color] from the gold." % fmt(bonus), ui.icon("coin", 3))
 
 
-## Supernova Bomb: charges for a moment (pulling bombs in), then erupts.
-func _supernova(pos: Vector3, radius: float, power: float) -> void:
+## Sushi Bomb (10 rebirths): a giant katana slices diagonally through the pillar, top right to
+## bottom left over SWORD_LAYERS layers, then from there top left to bottom right over another
+## SWORD_LAYERS. Everything above each cut breaks off at once.
+const SWORD_LAYERS := 10
+const SWORD_TIME := 0.28     # seconds for one swing
+
+func _sword() -> void:
 	var token := world_token
-	sfx.play("portal", 0.4, 2.0, 0.1)
-	for i in 10:
+	var top: int = pillar.highest_layer()
+	if top >= pillar.depth:
+		return
+	var right := camera.global_transform.basis.x
+	right.y = 0.0
+	right = right.normalized()
+	var span: float = pillar.half_width() * (absf(right.x) + absf(right.z))   # half the pillar, side to side on screen
+	var side := func(x: int, z: int) -> float:
+		var c: Vector3 = pillar.voxel_center(x, 0, z)
+		return clampf((c.x * right.x + c.z * right.z) / span, -1.0, 1.0)
+	var at := func(s: float, d: float) -> Vector3:
+		return right * (s * span) + Vector3(0, -d * Data.VOXEL, 0)
+	cam_hold_y = -(top + SWORD_LAYERS) * Data.VOXEL + 3.0
+	var cuts := [
+		[1.0, -1.0, top, top + SWORD_LAYERS],                       # top right -> bottom left
+		[-1.0, 1.0, top + SWORD_LAYERS, top + SWORD_LAYERS * 2],     # top left -> bottom right
+	]
+	for c in cuts:
+		var s0: float = c[0]
+		var s1: float = c[1]
+		var d0: float = c[2]
+		var d1: float = c[3]
+		var a: Vector3 = at.call(s0, d0)
+		var b: Vector3 = at.call(s1, d1)
+		sfx.play("slash", randf_range(0.95, 1.05), 4.0, 0.05)
+		await _swing_sword(a, b)
 		if token != world_token or not is_inside_tree():
 			return
-		fx.implode(pos, 3.0 - i * 0.25)
-		shake = maxf(shake, 0.1 + i * 0.03)
-		await get_tree().create_timer(0.12).timeout
-	_apply(pillar.dissolve(pos, 6.0 * Data.VOXEL * reach(), 0.6), pos)
-	_blast(pos, radius, power, Color(1.0, 0.75, 0.3), true)
-	fx.explosion(pos, 4.0, Color(1.0, 0.95, 0.7))
-	shake = maxf(shake, 2.0)
-	_vibrate(150)
+		# everything above the cut line goes
+		var res: Dictionary = pillar.break_where(top, int(ceil(maxf(d0, d1))), func(x: int, d: int, z: int) -> bool:
+			var s: float = side.call(x, z)
+			var line := lerpf(d0, d1, (s - s0) / (s1 - s0))
+			return d + 0.5 < line)
+		for i in mini(60, res["broken"].size()):
+			var e: Array = res["broken"][randi() % res["broken"].size()]
+			fx.debris(e[1], blocks.defs[e[0]]["c1"], e[1] + Vector3(randf_range(-1, 1), 1.0, randf_range(-1, 1)))
+		_apply(res, (a + b) * 0.5)
+		sfx.play("crack", 0.7, 2.0, 0.05)
+		sfx.play("explode", 1.4, -2.0, 0.05)
+		shake = maxf(shake, 0.7)
+		_vibrate(50)
+		await get_tree().create_timer(0.18).timeout
+		if token != world_token or not is_inside_tree():
+			return
+	await get_tree().create_timer(0.5).timeout
+	if token == world_token:
+		cam_hold_y = INF
+
+
+## The giant katana flies along the cut from a to b, tip first, flat side to the camera,
+## leaving a white streak behind it. models/bombs/katana.gltf (pointing up) if you made one.
+func _swing_sword(a: Vector3, b: Vector3) -> void:
+	var length: float = pillar.half_width() * 2.6
+	var dir := (b - a).normalized()
+	var pivot := Node3D.new()
+	var blade: Node3D
+	if has_model("bombs", "katana"):
+		blade = make_model("bombs", "katana", length, Color.WHITE)
+		_point_up(blade)
+	else:
+		blade = _plain_katana(length)
+	pivot.add_child(blade)
+	var to_cam := camera.global_position - (a + b) * 0.5
+	var y := dir
+	var z := (to_cam - y * to_cam.dot(y)).normalized()
+	var x := y.cross(z).normalized()
+	pivot.basis = Basis(x, y, z)
+	add_child(pivot)
+	# swing just in front of the pillar so the whole blade shows as it cuts
+	var front: Vector3 = to_cam.normalized() * (pillar.half_width() * 1.2)
+	var from: Vector3 = a + front - dir * length * 0.8
+	var to: Vector3 = b + front + dir * length * 0.1
+	pivot.position = from
+	var tw := pivot.create_tween()
+	tw.tween_property(pivot, "position", to, SWORD_TIME).set_trans(Tween.TRANS_QUAD).set_ease(Tween.EASE_IN)
+	var trail := pivot.create_tween()
+	for k in 12:
+		var p: Vector3 = a.lerp(b, (k + 1) / 12.0) + front
+		trail.tween_callback(func(): fx.beam(p, Color(0.92, 0.96, 1.0)); fx.beam(p, Color.WHITE))
+		trail.tween_interval(SWORD_TIME / 12.0)
+	await tw.finished
+	var out := pivot.create_tween()
+	out.tween_property(pivot, "scale", Vector3.ONE * 0.01, 0.2)
+	out.tween_callback(pivot.queue_free)
+
+
+## Turn a model so its longest side points along +Y (how the giant sword flies, tip first).
+func _point_up(holder: Node3D) -> void:
+	var acc: Array = [null]
+	_collect_aabb(holder, Transform3D.IDENTITY, acc)
+	if acc[0] == null:
+		return
+	var sz: Vector3 = (acc[0] as AABB).size
+	if sz.x >= sz.y and sz.x >= sz.z:
+		holder.rotate_z(PI * 0.5)
+	elif sz.z >= sz.y and sz.z >= sz.x:
+		holder.rotate_x(-PI * 0.5)
+
+
+## Stand-in giant katana until there's a model: a long, thin, gently curved blade with a
+## bright edge, a gold collar, a round black guard and a long black handle with white wrapping.
+func _plain_katana(length: float) -> Node3D:
+	var n := Node3D.new()
+	var steel := _flat_mat(Color("d9dfe6"), 0.9)
+	var edge := _flat_mat(Color("ffffff"), 0.9)
+	var gold := _flat_mat(Color("e8b83a"), 0.8)
+	var black := _flat_mat(Color("1a1a1e"), 0.2)
+	var wrap := _flat_mat(Color("f2efe6"), 0.0)
+	var blade_len := length * 0.7
+	var width := length * 0.042
+	var thick := length * 0.01
+	var curve := 0.07        # how far the tip bends back (share of the blade's length)
+	var segs := 8
+	for i in segs:
+		var t0 := float(i) / segs
+		var t1 := float(i + 1) / segs
+		var p0 := Vector2(curve * t0 * t0 * blade_len, t0 * blade_len)
+		var p1 := Vector2(curve * t1 * t1 * blade_len, t1 * blade_len)
+		var mid := (p0 + p1) * 0.5
+		var seg_len := p0.distance_to(p1) + thick
+		var w := width * (1.0 if i < segs - 1 else 0.6)   # the tip narrows
+		var ang := -atan2(p1.x - p0.x, p1.y - p0.y)
+		for part in [[w, steel, 0.0], [w * 0.3, edge, -w * 0.5]]:   # body, then the sharp edge
+			var mi := MeshInstance3D.new()
+			var bm := BoxMesh.new()
+			bm.size = Vector3(part[0], seg_len, thick)
+			mi.mesh = bm
+			mi.material_override = part[1]
+			mi.rotation.z = ang
+			mi.position = Vector3(mid.x, mid.y, 0) + Vector3(cos(ang), sin(ang), 0) * float(part[2])
+			n.add_child(mi)
+	var bits := [
+		[Vector3(width * 1.1, length * 0.03, thick * 2.0), Vector3(0, -length * 0.005, 0), gold],     # collar
+		[Vector3(length * 0.11, length * 0.012, length * 0.11), Vector3(0, -length * 0.026, 0), black],   # guard
+		[Vector3(width * 0.95, length * 0.24, width * 0.7), Vector3(0, -length * 0.152, 0), black],    # handle
+		[Vector3(width * 1.05, length * 0.02, width * 0.8), Vector3(0, -length * 0.282, 0), gold],     # end cap
+	]
+	for b in bits:
+		var mi := MeshInstance3D.new()
+		var bm := BoxMesh.new()
+		bm.size = b[0]
+		mi.mesh = bm
+		mi.material_override = b[2]
+		mi.position = b[1]
+		n.add_child(mi)
+	# the diamond pattern of the handle wrapping
+	for k in 6:
+		var mi := MeshInstance3D.new()
+		var bm := BoxMesh.new()
+		bm.size = Vector3(width * 0.45, width * 0.45, width * 0.75)
+		mi.mesh = bm
+		mi.material_override = wrap
+		mi.rotation.z = PI * 0.25
+		mi.position = Vector3(0, -length * (0.055 + 0.038 * k), 0)
+		n.add_child(mi)
+	n.position.y = length * 0.1    # centre it roughly on its length
+	var holder := Node3D.new()
+	holder.add_child(n)
+	return holder
+
+
+func _flat_mat(c: Color, metal: float) -> StandardMaterial3D:
+	var m := StandardMaterial3D.new()
+	m.albedo_color = c
+	m.metallic = metal
+	m.roughness = 0.25
+	return m
+
+
+## Moon Bomb (20 rebirths): a long falling whistle for MOON_WAIT seconds, then a moon twice as
+## wide as the pillar slams into the top and breaks the top half of what's left.
+const MOON_WAIT := 2.0
+const MOON_RED := 0.5       # how red the screen gets just before the moon hits
+
+func _moon_strike() -> void:
+	var token := world_token
+	sfx.play("moon_fall", 1.0, 6.0, 0.1)
+	# the sky burns redder and redder as the moon comes down
+	var red: ColorRect = ui.screen_tint(Color(1.0, 0.18, 0.06))
+	var glow := red.create_tween()
+	glow.tween_property(red, "color:a", MOON_RED, MOON_WAIT + 0.4).set_trans(Tween.TRANS_QUAD).set_ease(Tween.EASE_IN)
+	await get_tree().create_timer(MOON_WAIT).timeout
+	if token != world_token or not is_inside_tree():
+		red.queue_free()
+		return
+	var top: int = mini(pillar.highest_layer(), pillar.depth)
+	var surface := -top * Data.VOXEL
+	var size: float = pillar.half_width() * 4.0     # twice the pillar's width
+	var moon: Node3D
+	if has_model("bombs", "moon"):
+		moon = make_model("bombs", "moon", size, bomb_color("moon"))
+	else:
+		moon = _plain_moon(size)
+	var land := Vector3(0, surface + size * 0.35, 0)
+	moon.position = land + Vector3(0, 40.0, 0)
+	add_child(moon)
+	cam_hold_y = surface - 1.0
+	var tw := moon.create_tween()
+	tw.set_parallel(true)
+	tw.tween_property(moon, "position", land, 0.4).set_trans(Tween.TRANS_QUAD).set_ease(Tween.EASE_IN)
+	tw.tween_property(moon, "rotation", Vector3(0.6, 1.2, 0.3), 0.4)
+	await tw.finished
+	glow.kill()
+	var fade := red.create_tween()
+	fade.tween_property(red, "color:a", 0.0, 1.6).set_ease(Tween.EASE_OUT)
+	fade.tween_callback(red.queue_free)
+	if token != world_token or not is_inside_tree():
+		moon.queue_free()
+		return
+	# BOOM: the top half of the pillar that's left is gone
+	var half_to := top + int(ceil((pillar.depth - top) * 0.5))
+	var res: Dictionary = pillar.break_cells(pillar.cells_in_layers(top, half_to))
+	var hit := Vector3(0, surface, 0)
+	for i in mini(90, res["broken"].size()):
+		var e: Array = res["broken"][randi() % res["broken"].size()]
+		fx.debris(e[1], blocks.defs[e[0]]["c1"], hit)
+	_apply(res, hit, false)
+	ui.flash(Color(1.0, 0.97, 0.9, 0.85), 1.2)
+	fx.explosion(hit, 8.0, Color(1.0, 0.8, 0.45))
+	for i in 5:
+		fx.explosion(hit + Vector3(randf_range(-3, 3), randf_range(-2, 2), randf_range(-3, 3)), 5.0, Color(0.9, 0.9, 0.95))
+	fx.shockwave(hit, 9.0, [Color.WHITE, Color(0.85, 0.85, 0.9), Color(1.0, 0.75, 0.4)])
+	sfx.play("explode_big", 0.45, 8.0, 0.05)
+	sfx.play("explode_big", 0.7, 6.0, 0.05)
+	sfx.play("crack", 0.5, 4.0, 0.05)
+	shake = maxf(shake, 3.0)
+	_vibrate(300)
+	var gone := moon.create_tween()
+	gone.tween_property(moon, "scale", Vector3.ONE * 0.01, 0.35).set_trans(Tween.TRANS_BACK).set_ease(Tween.EASE_IN)
+	gone.tween_callback(moon.queue_free)
+	await get_tree().create_timer(1.4).timeout
+	if token == world_token:
+		cam_hold_y = INF
+
+
+## Stand-in moon until there's a model: a grey ball.
+func _plain_moon(size: float) -> Node3D:
+	var mi := MeshInstance3D.new()
+	var sm := SphereMesh.new()
+	sm.radius = size * 0.5
+	sm.height = size
+	mi.mesh = sm
+	var m := StandardMaterial3D.new()
+	m.albedo_color = Color("b4b4bc")
+	m.roughness = 0.95
+	mi.material_override = m
+	var n := Node3D.new()
+	n.add_child(mi)
+	return n
+
+
+## Grow Bomb (15 rebirths): lands and sits there for GROW_TIME seconds. Every tap in that
+## time (instead of dropping a bomb) makes its blast 1 block bigger - there's no limit. Then it
+## goes off, breaking everything in reach however tough.
+const GROW_TIME := 10.0
+var grow_bomb = null
+var grow_taps := 0
+var grow_left := 0.0
+
+func grow_landed(bomb) -> void:
+	grow_bomb = bomb
+	grow_taps = 0
+	grow_left = GROW_TIME
+	sfx.play("unlock", 0.7, 0.0, 0.05)
+	ui.show_charge(true)
+
+
+func grow_charging() -> bool:
+	return grow_bomb != null and is_instance_valid(grow_bomb) and grow_left > 0.0
+
+
+func _grow_tap() -> void:
+	grow_taps += 1
+	stat("taps")
+	var b = grow_bomb
+	# it swells a little with every tap (the blast keeps growing even when the bomb stops)
+	var s: float = 1.0 + minf(2.5, grow_taps * 0.04)
+	var tw: Tween = b.visual.create_tween()
+	tw.tween_property(b.visual, "scale", Vector3.ONE * s * 1.15, 0.05)
+	tw.tween_property(b.visual, "scale", Vector3.ONE * s, 0.08)
+	sfx.play("land", minf(2.5, 0.8 + grow_taps * 0.02), -2.0, 0.02)
+	fx.spark(b.global_position + Vector3(randf_range(-0.3, 0.3), 0.4, randf_range(-0.3, 0.3)))
+	_vibrate(6)
+
+
+func _update_grow(delta: float) -> void:
+	if grow_bomb == null:
+		return
+	if not is_instance_valid(grow_bomb):
+		grow_bomb = null
+		ui.show_charge(false)
+		return
+	grow_left -= delta
+	ui.set_charge("TAP TAP TAP!", "Blast: [color=#ffcf5a]%d block%s[/color]   %ds" % [1 + grow_taps, "" if grow_taps == 0 else "s", int(ceil(maxf(grow_left, 0.0)))])
+	if grow_left <= 0.0:
+		var b = grow_bomb
+		grow_bomb = null
+		ui.show_charge(false)
+		b.explode()
+
+
+func _grow_blast(pos: Vector3) -> void:
+	var blocks_r := 1 + grow_taps
+	var r := blocks_r * Data.VOXEL
+	_apply(pillar.dissolve(pos, r, 0.5), pos)
+	var big := minf(r, 9.0)
+	fx.explosion(pos, maxf(1.0, big), Color(0.55, 1.0, 0.35))
+	fx.explosion(pos, maxf(1.0, big * 0.7), Color(1.0, 0.9, 0.5))
+	if blocks_r >= 8:
+		fx.shockwave(pos, big, [Color(0.6, 1.0, 0.4), Color(1.0, 0.95, 0.6), Color.WHITE])
+	sfx.play("explode_big", clampf(1.2 - blocks_r * 0.01, 0.45, 1.2), clampf(blocks_r * 0.2, 0.0, 8.0), 0.05)
+	shake = maxf(shake, clampf(0.4 + blocks_r * 0.03, 0.4, 3.0))
+	_vibrate(mini(300, 40 + blocks_r * 4))
+	grow_taps = 0
 
 
 # ---------------------------------------------------------------------------------------------
@@ -1142,20 +1608,34 @@ func treasure_id(w: int) -> String:
 
 ## Can the Bedrock Bomb be used in the world you're in right now?
 func bedrock_bomb_state() -> String:
-	if not pillar.reached_bedrock():
-		return "not_reached"
 	if pillar.bedrock_broken():
 		return "broken"
-	if int(ores.get(Data.BEDROCK_BOMB_ORE, 0)) < Data.BEDROCK_BOMB_COST:
+	for b in bombs_node.get_children():
+		if b.get("kind") == "bedrock" and not b.get("exploded"):
+			return "falling"   # one's already on its way - don't pay for a second
+	if next_bedrock_world() != current_world and not bool(worlds[current_world].get("bedrock_done", false)):
+		return "out_of_order"
+	if not pillar.reached_bedrock():
+		return "not_reached"
+	if int(ores.get(Data.BEDROCK_BOMB_ORE, 0)) < Data.bedrock_cost(current_world):
 		return "need_treasure"
 	return "ready"
+
+
+## Bedrock Bombs go in order: World 1's bedrock first, then World 2's, and so on.
+## Returns the first world whose bedrock has never been broken (-1 when all are done).
+func next_bedrock_world() -> int:
+	for w in Data.WORLDS.size():
+		if not bool(worlds[w].get("bedrock_done", false)):
+			return w
+	return -1
 
 
 func use_bedrock_bomb() -> void:
 	if bedrock_bomb_state() != "ready" or ui.popup_open():
 		sfx.play("error")
 		return
-	ores[Data.BEDROCK_BOMB_ORE] = int(ores.get(Data.BEDROCK_BOMB_ORE, 0)) - Data.BEDROCK_BOMB_COST
+	ores[Data.BEDROCK_BOMB_ORE] = int(ores.get(Data.BEDROCK_BOMB_ORE, 0)) - Data.bedrock_cost(current_world)
 	_spawn_bomb("bedrock", _spawn_point(0.3))
 	sfx.play("drop", 0.6)
 	ui.refresh()
@@ -1163,6 +1643,7 @@ func use_bedrock_bomb() -> void:
 
 func _break_bedrock() -> void:
 	var spots: Array = pillar.break_bedrock()
+	stat("bedrocks")
 	for i in mini(spots.size(), 60):
 		var p: Vector3 = spots[randi() % spots.size()]
 		fx.debris(p, Color("4a4a4e"), p + Vector3(randf_range(-1, 1), -1, randf_range(-1, 1)))
@@ -1171,10 +1652,11 @@ func _break_bedrock() -> void:
 	shake = maxf(shake, 1.5)
 	_vibrate(120)
 	worlds[current_world]["bedrock_broken"] = true
+	worlds[current_world]["bedrock_done"] = true   # stays even if the world is reset
 	worlds[current_world]["empty"] = false
-	ui.show_popup("THE BEDROCK SHATTERED!",
-		("A vault lies below %s.\nDig to the bottom to find the bomb cache." if current_world < Data.ORIGINAL_WORLDS else "A vault full of ore lies below %s.\nDig it out!") % Data.WORLDS[current_world]["name"],
-		[["DIG IN", Callable(), "green"]], ui.micon("bombs", "bedrock", "bedrock", 5), ["bombs", "bedrock"])
+	ui.notify("THE BEDROCK SHATTERED!",
+		"A vault lies below. Dig to the bottom - something is waiting there!",
+		ui.micon("bombs", "bedrock", "bedrock", 3), ["bombs", "bedrock"])
 	save_game()
 
 
@@ -1184,7 +1666,10 @@ func _open_cache(w: int) -> void:
 	if w == Data.STAR_CORE_WORLD:
 		rebirth_ready = true
 		save_game()
-		show_rebirth_popup()
+		sfx.play("unlock")
+		_vibrate(100)
+		ui.notify("THE STAR CORE!", "You can rebirth now. [color=#9be36b]Tap here[/color] or the rebirth button at the top.",
+			ui.icon("rebirth", 3), [], show_rebirth_popup, 8.0)
 		ui.rebuild_tab()
 		return
 	for rl in Data.RELICS:
@@ -1193,9 +1678,10 @@ func _open_cache(w: int) -> void:
 			sfx.play("unlock")
 			_vibrate(100)
 			var col := Color(rl["col"])
-			ui.show_popup("YOU FOUND THE %s!" % rl["name"].to_upper(),
-				"A relic!\n%s.\nIt works in every world until you rebirth." % rl["desc"],
-				[["AWESOME", Callable(), "green"]], ui.micon("relics", rl["id"], "gem", 5, col), ["relics", rl["id"]])
+			ui.notify("YOU FOUND THE %s!" % rl["name"].to_upper(),
+				"A relic! %s. [color=#9be36b]Tap to see your relics.[/color]" % rl["desc"],
+				ui.micon("relics", rl["id"], "gem", 3, col), ["relics", rl["id"]], func(): ui.switch_tab("relics"), 7.0)
+			ui.update_tabs()
 			ui.rebuild_tab()
 			save_game()
 			return
@@ -1205,14 +1691,14 @@ func _open_cache(w: int) -> void:
 			cooldowns[sp["id"]] = 0.0
 			sfx.play("unlock")
 			_vibrate(100)
-			var body := "%s.\nIt's in your hotbar now." % sp["desc"]
+			var body := "%s. It's in your hotbar now." % sp["desc"]
 			for ow in _try_unlock():
-				body += "\n\n[color=#ffcf5a]%s[/color] has opened! Travel there from the WORLDS tab." % Data.WORLDS[ow]["name"]
+				body += "\n[color=#ffcf5a]%s[/color] has opened!" % Data.WORLDS[ow]["name"]
 			for rw in range(Data.ORIGINAL_WORLDS, Data.WORLDS.size()):
 				if world_needs(rw) == sp["id"] and rw >= unlocked_worlds:
-					body += "\n\nThis bomb opens [color=#ffcf5a]%s[/color] once you reach the bottom of %s." % [Data.WORLDS[rw]["name"], Data.WORLDS[rw - 1]["name"]]
-			ui.show_popup("YOU FOUND THE %s!" % sp["name"].to_upper(), body,
-				[["AWESOME", Callable(), "green"]], ui.micon("bombs", sp["id"], sp["id"], 5), ["bombs", sp["id"]])
+					body += "\nIt opens [color=#ffcf5a]%s[/color] once you reach the bottom of %s." % [Data.WORLDS[rw]["name"], Data.WORLDS[rw - 1]["name"]]
+			ui.notify("YOU FOUND THE %s!" % sp["name"].to_upper(), body,
+				ui.micon("bombs", sp["id"], sp["id"], 3), ["bombs", sp["id"]], Callable(), 7.0)
 			ui.rebuild_hotbar()
 			ui.rebuild_tab()
 			save_game()
@@ -1325,8 +1811,11 @@ func _collect(broken: Array, center: Vector3, debris := true) -> Array:
 	var gained := 0.0
 	var counts := {}
 	var debris_budget := 16
+	stat("blocks", broken.size())
 	var best_rank := -1
 	var cache_world := -1
+	var eggs := 0
+	var egg_at := Vector3.ZERO
 	for e in broken:
 		var t: int = e[0]
 		var p: Vector3 = e[1]
@@ -1338,19 +1827,26 @@ func _collect(broken: Array, center: Vector3, debris := true) -> Array:
 		if oid != "":
 			ores[oid] = int(ores.get(oid, 0)) + 1
 			ores_seen[oid] = true
+			stat("ores")
 			var v := ore_value(oid)
 			gained += v
 			counts[oid] = int(counts.get(oid, 0)) + 1
 			best_rank = maxi(best_rank, int(def.get("rank", 0)))
 			_spawn_gem(oid, p)
 			ui.toast_ore(oid, 1)
+			if oid == Data.BEDROCK_BOMB_ORE:
+				eggs += 1
+				egg_at = p
+				counts.erase(oid)   # eggs are never part of idle/offline income
 		else:
-			gained += float(def.get("coins", 0.0)) * value_mult() * coin_scale(int(def["world"]))
+			gained += float(def.get("coins", 0.0)) * value_mult() * coin_scale(int(def["world"])) * rebirth_coin_mult()
 			if debris and debris_budget > 0 and randf() < 0.55:
 				fx.debris(p, def["c1"], center)
 				debris_budget -= 1
 	if cache_world >= 0:
 		_open_cache.call_deferred(cache_world)
+	if eggs > 0:
+		_eggs_found(eggs, egg_at)
 	if gained > 0.0:
 		add_coins(gained)
 	if best_rank >= 0:
@@ -1427,9 +1923,14 @@ func make_model(folder: String, id: String, size: float, color: Color) -> Node3D
 		var scene = _scene_cache[path]
 		if scene is PackedScene:
 			var inst: Node3D = scene.instantiate()
-			if folder in ["bombs", "relics"] and not _soft_checked.has(path):
+			if folder == "bombs" and not _soft_checked.has(path):
 				_soft_checked[path] = true
 				_soften_alpha(inst)
+			if folder == "bombs" and id in CHROME_BOMBS:
+				_make_shiny(inst, Color(CHROME_BOMBS[id]), false, true)
+			if folder == "relics":
+				var rl := Data.get_relic(id)
+				_make_shiny(inst, Color(String(rl.get("col", "ffffff"))), bool(rl.get("keep_white", false)))
 			if folder == "ores":
 				# shared grey shape -> recolor for this ore; every ore model gets baked face shading
 				var shared: bool = not path.get_file().get_basename() == id
@@ -1438,6 +1939,83 @@ func make_model(folder: String, id: String, size: float, color: Color) -> Node3D
 				size *= float(shape_scale.get(Data.ORE_SHAPES[id], 1.0))
 			return _fit(inst, size)
 	return _placeholder(folder, size, color)
+
+
+## Relics: painted as polished metal in one color. A fake shiny "studio" reflection (bright
+## above, dark below, a hot streak at the horizon) plus a sharp highlight and a rim, so they
+## gleam as they spin in their icons without needing a real sky to reflect.
+## With keep_white, pure-white texture pixels (like the Storm Battery's "!" marks) stay white.
+const SHINY_VERSION := 2
+## Bombs drawn as polished chrome: their own texture colours, with mirror-like shine on top.
+## (The colour is used for any part that has no texture.)
+const CHROME_BOMBS := {"gold": "ffc533"}
+const SHINY_SHADER := """
+shader_type spatial;
+render_mode unshaded, cull_disabled;
+uniform vec4 tint : source_color = vec4(1.0);
+uniform sampler2D tex : source_color, filter_nearest;
+uniform bool use_tex = false;
+uniform bool tex_color = false;   // chrome: the texture gives the colour, the shine goes on top
+
+void fragment() {
+	vec3 n = normalize(NORMAL);
+	if (!FRONT_FACING) { n = -n; }
+	vec3 v = normalize(VIEW);
+	vec3 l = normalize(vec3(-0.45, 0.8, 0.55));
+	float diff = max(dot(n, l), 0.0);
+	vec3 r = reflect(-v, n);
+	float env = mix(0.22, 0.95, smoothstep(-0.7, 0.45, r.y));
+	env += 0.8 * exp(-pow((r.y + 0.3) * 7.0, 2.0));           // bright streak along the horizon
+	env += 0.35 * smoothstep(0.5, 1.0, r.x * 0.6 + r.y * 0.8);  // soft window glare, upper left
+	float spec = pow(max(dot(n, normalize(l + v)), 0.0), 70.0);
+	float rim = pow(1.0 - max(dot(n, v), 0.0), 3.0);
+	vec3 base = tint.rgb;
+	if (tex_color) {
+		vec4 tc = texture(tex, UV);
+		if (tc.a < 0.5) { discard; }
+		base = tc.rgb;
+	}
+	vec3 metal = base * (0.16 + 0.22 * diff + 0.8 * env) + vec3(1.0) * (1.2 * spec + 0.3 * rim * env);
+	if (tex_color) {
+		metal += vec3(0.35) * smoothstep(0.55, 1.0, env);   // chrome: bright mirror streaks
+	}
+	vec3 c = metal;
+	if (use_tex) {
+		vec4 t = texture(tex, UV);
+		if (t.a > 0.5 && min(t.r, min(t.g, t.b)) > 0.97) {
+			c = vec3(0.86 + 0.14 * diff) + vec3(0.6 * spec);
+		}
+	}
+	ALBEDO = clamp(c, vec3(0.0), vec3(1.0));
+}
+"""
+var _shiny_shader: Shader
+var _shiny_mats := {}
+
+func _make_shiny(node: Node, tint: Color, keep_white: bool, chrome := false) -> void:
+	if _shiny_shader == null:
+		_shiny_shader = Shader.new()
+		_shiny_shader.code = SHINY_SHADER
+	for mi in ([node] + node.find_children("*", "MeshInstance3D", true, false)):
+		if not (mi is MeshInstance3D) or (mi as MeshInstance3D).mesh == null:
+			continue
+		var m := mi as MeshInstance3D
+		for si in m.mesh.get_surface_count():
+			var tex: Texture2D = null
+			var src := m.mesh.surface_get_material(si)
+			if (keep_white or chrome) and src is BaseMaterial3D:
+				tex = (src as BaseMaterial3D).albedo_texture
+			var key := "%s|%d|%s" % [tint.to_html(), tex.get_instance_id() if tex else 0, chrome]
+			if not _shiny_mats.has(key):
+				var mat := ShaderMaterial.new()
+				mat.shader = _shiny_shader
+				mat.set_shader_parameter("tint", tint)
+				mat.set_shader_parameter("use_tex", tex != null and not chrome)
+				mat.set_shader_parameter("tex_color", tex != null and chrome)
+				if tex:
+					mat.set_shader_parameter("tex", tex)
+				_shiny_mats[key] = mat
+			m.set_surface_override_material(si, _shiny_mats[key])
 
 
 ## Blockbench exports see-through parts as on/off cut-outs, which throws away soft edges (like
@@ -1488,8 +2066,11 @@ func _model_path(folder: String, id: String) -> String:
 
 
 func _find_model_path(folder: String, id: String) -> String:
+	var file := id
+	if folder == "relics":
+		file = String(Data.get_relic(id).get("model", id))
 	for ext in [".glb", ".gltf"]:
-		var p := "res://models/%s/%s%s" % [folder, id, ext]
+		var p := "res://models/%s/%s%s" % [folder, file, ext]
 		if ResourceLoader.exists(p):
 			return p
 	if folder == "ores" and Data.ORE_SHAPES.has(id):
@@ -1675,6 +2256,8 @@ func _render_icons() -> void:
 	for job in jobs:
 		if job[0] != "world":
 			continue
+		if _load_cached_icon("%s/%s" % [job[0], job[1]], _icon_sig(job[0], job[1])):
+			continue   # its saved spinning loop is ready
 		var node := _world_icon_node(int(job[1]))
 		vp.add_child(node)
 		await RenderingServer.frame_post_draw
@@ -1720,8 +2303,18 @@ func _model_sig(folder: String, id: String) -> String:
 ## Everything that changes how an icon looks. If this matches what was saved, the saved icon is used.
 func _icon_sig(folder: String, id: String) -> String:
 	var extra := "%d|%d|%d|%.3f|%.3f" % [ICON_CACHE_VERSION, MODEL_ICON_RES, ICON_FRAMES, ICON_BOB, float(ICON_TURN.get(id, 0.0))]
+	if folder == "bombs" and ICON_SHRINK.has(id):
+		extra += "|shrink%.3f" % float(ICON_SHRINK[id])
 	if folder == "ores":
 		extra += "|%s|%.3f" % [ore_table[id]["color"].to_html(), float(shape_scale.get(Data.ORE_SHAPES.get(id, ""), 1.0))]
+	if folder == "world":
+		var wd: Dictionary = Data.WORLDS[int(id)]
+		extra += "|world%d" % hash([wd["layers"], wd["ores"][3]["id"]])
+	if folder == "relics":
+		var rl := Data.get_relic(id)
+		extra += "|shiny%d|%s|%s|%s" % [SHINY_VERSION, rl.get("col", ""), rl.get("model", id), rl.get("keep_white", false)]
+	if folder == "bombs" and CHROME_BOMBS.has(id):
+		extra += "|chrome%d" % SHINY_VERSION
 	if folder == "bombs" and ICON_PILES.has(id):
 		extra += "|pile%d" % ICON_PILES[id].size()
 	if folder == "bombs" and _model_path(folder, id + "pile") != "":
@@ -1775,7 +2368,13 @@ func _icon_size(folder: String, id: String) -> float:
 		# fill the icon, but keep the tall shapes (scaled up in-game) inside the frame
 		var sc := float(shape_scale.get(Data.ORE_SHAPES.get(id, ""), 1.0))
 		return 0.82 / maxf(sc, 1.0)
+	if folder == "bombs" and ICON_SHRINK.has(id):
+		return 0.9 * float(ICON_SHRINK[id])
 	return 0.9
+
+
+## Boxy models look bigger from the icon camera's corner view, so they're drawn a bit smaller.
+const ICON_SHRINK := {"tnt": 0.68}
 
 
 ## Bombs and ores: a spinning, bobbing loop (like a dropped item in Minecraft).
@@ -1786,7 +2385,7 @@ func _render_spin_icons() -> void:
 		return
 	var keys: Array = []
 	for k in model_icons.keys():
-		if not String(k).begins_with("world/") and not model_icon_frames.has(k):
+		if not model_icon_frames.has(k):
 			keys.append(k)
 	if keys.is_empty():
 		return
@@ -1804,11 +2403,11 @@ func _render_spin_icons() -> void:
 		var nodes: Array = []
 		for k in ICON_FRAMES:
 			var v: SubViewport = pool[k]
-			var node := make_icon_model(folder, id, _icon_size(folder, id), Color.BLACK)
+			var node: Node3D = _world_icon_node(int(id)) if folder == "world" else make_icon_model(folder, id, _icon_size(folder, id), Color.BLACK)
 			var t := float(k) / ICON_FRAMES
 			node.rotation.y = _icon_turn(node) + float(ICON_TURN.get(id, 0.0)) + TAU * t
 			node.position.y = sin(TAU * t) * ICON_BOB
-			v.get_meta("cam").size = 1.3 if folder in ["bombs", "relics"] else 1.0
+			v.get_meta("cam").size = 1.3 if folder in ["bombs", "relics", "world"] else 1.0
 			v.add_child(node)
 			v.render_target_update_mode = SubViewport.UPDATE_ONCE
 			nodes.append(node)
@@ -1832,6 +2431,8 @@ func _render_spin_icons() -> void:
 			_save_cached_icon(key, _icon_sig(parts2[0], parts2[1]), frames)
 			if ui:
 				ui.spin_ready(key)
+			if loading_screen and is_instance_valid(loading_screen):
+				loading_screen.spin_ready(key)
 	_save_icon_index()
 	for v in pool:
 		v.queue_free()
@@ -2144,6 +2745,13 @@ func _process(delta: float) -> void:
 	prof("blocks", __t)
 	if ui == null:
 		return  # still starting up (rendering icons)
+	stats["time"] = float(stats.get("time", 0.0)) + delta
+	_update_grow(delta)
+	_check_hints(delta)
+	afford_timer -= delta
+	if afford_timer <= 0.0:
+		afford_timer = 0.5
+		_check_new_bombs()
 
 	if holding:
 		hold_timer -= delta
@@ -2163,6 +2771,7 @@ func _process(delta: float) -> void:
 			auto_accum -= 1.0
 			if bombs_node.get_child_count() < MAX_BOMBS:
 				_spawn_bomb("bomb", _spawn_point(1.0))
+				stat("auto_bombs")
 
 	# auto-bombers in other worlds earn from their averages
 	bg_timer += delta
@@ -2175,7 +2784,7 @@ func _process(delta: float) -> void:
 	for id in cooldowns.keys():
 		cooldowns[id] = maxf(0.0, float(cooldowns[id]) - delta)
 
-	if portal_open and portal_node:
+	if portal_open and portal_node and not portal_locked():
 		fx.portal_upright(portal_node.position + Vector3(0, PORTAL_H * 0.5, 0.15), PORTAL_W, PORTAL_H)
 
 	_update_camera(delta, false)
@@ -2234,6 +2843,8 @@ func _update_camera(delta: float, snap: bool) -> void:
 	cam_focus = target if snap else cam_focus.lerp(target, clampf(delta * 3.0, 0.0, 1.0))
 	var offset := Vector3(7.2, 8.6, 10.4)
 	var shake_off := Vector3.ZERO
+	if reduce_flash:
+		shake = 0.0
 	if shake > 0.0:
 		shake = maxf(0.0, shake - delta * 2.5)
 		shake_off = Vector3(randf_range(-1, 1), randf_range(-1, 1), randf_range(-1, 1)) * shake * 0.35
@@ -2265,13 +2876,13 @@ func grant_offline(seconds: float) -> void:
 			total_o[k] = int(total_o.get(k, 0)) + int(r["ores"][k])
 	if total_c <= 0.0 and total_o.is_empty():
 		return
-	var lines := "You were gone for %s.\nYour auto-bombers found:\n\n[color=#ffcf5a]%s coins[/color]" % [_duration(seconds), fmt(total_c)]
+	var lines := "Gone %s. Your auto-bombers found [color=#ffcf5a]%s coins[/color]" % [_duration(seconds), fmt(total_c)]
 	var sorted_ores := total_o.keys()
 	sorted_ores.sort_custom(func(a, b): return ore_table[a]["value"] > ore_table[b]["value"])
-	for i in mini(5, sorted_ores.size()):
+	for i in mini(3, sorted_ores.size()):
 		var k: String = sorted_ores[i]
-		lines += "\n%s %s" % [fmt(float(total_o[k])), ore_table[k]["name"]]
-	ui.show_popup("WELCOME BACK", lines, [["COLLECT", Callable(), "green"]], ui.icon("auto", 5))
+		lines += ", %s %s" % [fmt(float(total_o[k])), ore_table[k]["name"]]
+	ui.notify("WELCOME BACK", lines + ".", ui.icon("auto", 3), [], Callable(), 8.0)
 	sfx.play("gem_rare")
 
 
@@ -2306,8 +2917,9 @@ func save_game() -> void:
 		"ores": ores, "ores_seen": ores_seen,
 		"current_world": current_world, "unlocked_worlds": unlocked_worlds,
 		"worlds": worlds, "specials": specials, "cooldowns": cooldowns, "mirror_copy": mirror_copy,
-		"relics": relics, "rebirths": rebirths, "rebirth_ready": rebirth_ready,
-		"sound_on": sound_on, "vibrate_on": vibrate_on,
+		"relics": relics, "rebirths": rebirths, "rebirth_ready": rebirth_ready, "hide_early_worlds": hide_early_worlds,
+		"sound_on": sound_on, "vibrate_on": vibrate_on, "reduce_flash": reduce_flash,
+		"stats": stats, "hints_seen": hints_seen,
 		"time": Time.get_unix_time_from_system(),
 	}
 	var f := FileAccess.open(SAVE_PATH, FileAccess.WRITE)
@@ -2341,6 +2953,100 @@ func save_to_slot(i: int) -> void:
 		f.store_string(FileAccess.get_file_as_string(SAVE_PATH))
 	sfx.play("unlock")
 
+## ---- Stats ---------------------------------------------------------------------------------
+func stat(key: String, n := 1.0) -> void:
+	stats[key] = float(stats.get(key, 0.0)) + n
+
+
+## ---- First-time guide: short notes that slide in once, the first time something matters ----
+const HINTS := {
+	"start": ["WELCOME TO BLAST PILLAR!", "Tap anywhere to drop bombs. Hold your finger down to keep dropping them."],
+	"first_upgrade": ["BUY UPGRADES", "You can afford an upgrade! Open the [color=#ffcf5a]UPGRADES[/color] tab below to make your bombs stronger."],
+	"auto": ["AUTO-BOMBERS", "Auto-Bombers drop bombs for you - even while the game is closed. Buy them in [color=#ffcf5a]UPGRADES[/color]."],
+	"ores": ["ORES", "Ores pay out coins as you dig them. The [color=#ffcf5a]ORES[/color] tab shows every ore you've found."],
+	"special": ["SPECIAL BOMBS", "Special bombs live in the bar above the menu. Tap one to fire it - then it reloads."],
+	"special_used": ["RELOADING", "Special bombs reload over time. Upgrade their reload in the [color=#ffcf5a]BOMBS[/color] tab."],
+	"portal": ["THE PORTAL", "Clear the pillar down to the bedrock to open the portal to the next world. Switch worlds any time in [color=#ffcf5a]WORLDS[/color]."],
+	"bedrock": ["BEDROCK", "Something is hidden under every world's bedrock. A [color=#b46bff]Bedrock Bomb[/color] (BOMBS tab) breaks it - it costs Cosmic Eggs, which are buried in every world."],
+	"egg": ["COSMIC EGGS", "Use your egg on a Bedrock Bomb in the [color=#ffcf5a]BOMBS[/color] tab. Bedrock goes in order, starting with Grasslands."],
+	"vault": ["THE VAULT", "Dig to the very bottom of the vault - there's a prize waiting in the crate."],
+}
+var hint_timer := 0.0
+
+func hint(id: String) -> void:
+	if hints_seen.has(id) or not HINTS.has(id) or ui == null:
+		return
+	hints_seen[id] = true
+	ui.notify(HINTS[id][0], HINTS[id][1], ui.icon("hint", 3), [], Callable(), 8.0)
+
+
+func _check_hints(delta: float) -> void:
+	hint_timer -= delta
+	if hint_timer > 0.0:
+		return
+	hint_timer = 0.5
+	if hints_seen.size() >= HINTS.size():
+		return
+	if float(stats.get("time", 0.0)) > 1.0:
+		hint("start")
+	for u in Data.UPGRADES:
+		if not upgrade_maxed(u) and coins >= upgrade_cost(u):
+			hint("first_upgrade")
+			break
+	if hints_seen.has("first_upgrade") and can_afford(auto_cost(current_world)) and int(worlds[current_world]["auto"]) == 0:
+		hint("auto")
+	if float(stats.get("ores", 0.0)) >= 5.0:
+		hint("ores")
+	for id in specials:
+		hint("special")
+		break
+	if portal_open:
+		hint("portal")
+	if portal_open and not pillar.bedrock_broken():
+		hint("bedrock")
+	if int(ores.get(Data.BEDROCK_BOMB_ORE, 0)) > 0:
+		hint("egg")
+	if pillar.bedrock_broken() and pillar.cache_left():
+		hint("vault")
+
+
+## ---- Save backup: the whole game as one code you can copy and paste back in ----------------
+const SAVE_CODE_PREFIX := "BLASTPILLAR1:"
+
+func export_save_code() -> String:
+	save_game()
+	var raw := FileAccess.get_file_as_string(SAVE_PATH).to_utf8_buffer()
+	var packed := raw.compress(FileAccess.COMPRESSION_GZIP)
+	return SAVE_CODE_PREFIX + "%d:" % raw.size() + Marshalls.raw_to_base64(packed)
+
+
+## Returns "" when the code is good (and restarts into it), otherwise what's wrong with it.
+func import_save_code(code: String) -> String:
+	code = code.strip_edges()
+	if not code.begins_with(SAVE_CODE_PREFIX):
+		return "That isn't a Blast Pillar save code."
+	var rest := code.substr(SAVE_CODE_PREFIX.length())
+	var colon := rest.find(":")
+	if colon < 0:
+		return "The save code is cut off."
+	var size := int(rest.substr(0, colon))
+	var packed := Marshalls.base64_to_raw(rest.substr(colon + 1))
+	if packed.is_empty() or size <= 0:
+		return "The save code is cut off."
+	var raw := packed.decompress(size, FileAccess.COMPRESSION_GZIP)
+	var d = JSON.parse_string(raw.get_string_from_utf8())
+	if typeof(d) != TYPE_DICTIONARY or not d.has("version"):
+		return "The save code is damaged."
+	d["time"] = Time.get_unix_time_from_system()
+	var f := FileAccess.open(SAVE_PATH, FileAccess.WRITE)
+	if f == null:
+		return "Couldn't write the save."
+	f.store_string(JSON.stringify(d))
+	f.close()
+	_restart()
+	return ""
+
+
 ## Replace the current game with a slot and restart from it (no offline income for the gap).
 func load_slot(i: int) -> void:
 	if not FileAccess.file_exists(slot_path(i)):
@@ -2363,7 +3069,13 @@ func new_game() -> void:
 		DirAccess.remove_absolute(ProjectSettings.globalize_path(SAVE_PATH))
 	_restart()
 
+## Restarts from inside the game (rebirth, loading a save, a new game) go straight back in,
+## without the loading / START screen. Static, so it survives the scene being reloaded.
+static var quick_restart := false
+static var cheats_unlocked := false
+
 func _restart() -> void:
+	quick_restart = true
 	switching_save = true
 	get_tree().reload_current_scene.call_deferred()
 
@@ -2373,6 +3085,36 @@ func cheat_coins() -> void:
 	add_coins(maxf(1.0e6, coins * 1000.0))
 	sfx.play("gem_rare")
 	ui.refresh()
+
+func cheat_set_coins(v: float) -> void:
+	coins = maxf(0.0, v)
+	total_coins = maxf(total_coins, coins)
+	sfx.play("gem_rare")
+	save_game()
+	ui.refresh()
+
+## Cheats: everything, all at once - every upgrade, world, bomb, relic and 20 rebirths.
+func cheat_max_out() -> void:
+	for u in Data.UPGRADES:
+		levels[u["id"]] = int(u["max"]) if int(u["max"]) >= 0 else 60
+	unlocked_worlds = Data.WORLDS.size()
+	for w in Data.WORLDS.size():
+		worlds[w]["done"] = true
+		worlds[w]["bedrock_done"] = true
+		worlds[w]["auto"] = AUTO_MAX
+	for sp in Data.SPECIALS:
+		specials[sp["id"]] = Data.SPECIAL_MAX_LEVEL
+		cooldowns[sp["id"]] = 0.0
+	for rl in Data.RELICS:
+		relics[rl["id"]] = true
+	rebirths = maxi(rebirths, 20)
+	for oid in ore_table:
+		ores[oid] = int(ores.get(oid, 0)) + 1000
+		ores_seen[oid] = true
+	add_coins(1.0e30)
+	save_game()
+	_restart()
+
 
 func cheat_upgrades() -> void:
 	for u in Data.UPGRADES:
@@ -2387,7 +3129,7 @@ func cheat_upgrades() -> void:
 	ui.refresh()
 
 func cheat_eggs() -> void:
-	ores[Data.BEDROCK_BOMB_ORE] = int(ores.get(Data.BEDROCK_BOMB_ORE, 0)) + Data.BEDROCK_BOMB_COST
+	ores[Data.BEDROCK_BOMB_ORE] = int(ores.get(Data.BEDROCK_BOMB_ORE, 0)) + 10
 	ores_seen[Data.BEDROCK_BOMB_ORE] = true
 	sfx.play("gem_rare")
 	ui.refresh()
@@ -2406,17 +3148,16 @@ func _grant_rebirth_bombs() -> void:
 
 func show_rebirth_popup() -> void:
 	var next := rebirths + 1
-	var body := "Start over from Grasslands with [color=#ffcf5a]+%d%% damage[/color] for good.\nAfter this rebirth: [color=#ffcf5a]x%.2f damage[/color].\n\nEverything resets - coins, ores, upgrades, worlds, relics and vault bombs. You keep your rebirths and rebirth bombs.\n\n[color=#ffcf5a]REBIRTH BOMBS[/color]" % [int(Data.REBIRTH_DAMAGE * 100), 1.0 + Data.REBIRTH_DAMAGE * next]
-	for sp in Data.SPECIALS:
-		if not sp.has("rebirth"):
-			continue
-		var need := int(sp["rebirth"])
-		if specials.has(sp["id"]):
-			body += "\n[color=#9be36b]%s[/color]  (owned)" % sp["name"]
-		else:
-			body += "\n[color=#b9a990]??? - unlocks at %d rebirths[/color]" % need
-	ui.show_popup("REBIRTH?", body, [["CANCEL", Callable(), "gold"], ["REBIRTH", func(): do_rebirth(), "red"]],
-		ui.icon("world", 5, Color("ffcf5a")))
+	var body := "Rebirths: [color=#ffcf5a]%d[/color]   Damage: [color=#ffcf5a]x%s[/color]   Coins: [color=#ffcf5a]x%d[/color]\n\n" % [rebirths, fmt(rebirth_mult()), int(rebirth_coin_mult())]
+	var buttons: Array
+	if rebirth_ready:
+		body += "Start over from Grasslands with [color=#ffcf5a]x%s damage[/color] in Worlds 1-6 (the Deep Realms ignore it) and [color=#ffcf5a]x%d coins[/color] everywhere, for good.\n\nEverything resets - coins, ores, upgrades, worlds, relics and vault bombs. You keep your rebirths and rebirth bombs." % [fmt(Data.REBIRTH_MULT * next), next + 1]
+		buttons = [["CANCEL", Callable(), "gold"], ["REBIRTH", func(): do_rebirth(), "red"]]
+	else:
+		body += "Break the Star Core at the bottom of %s's vault to rebirth again." % Data.WORLDS[Data.STAR_CORE_WORLD]["name"]
+		buttons = [["CLOSE", Callable(), "green"]]
+	body += "\n\n[color=#ffcf5a]REBIRTH BOMBS (PERMANENT)[/color]"
+	ui.show_popup("REBIRTH" if not rebirth_ready else "REBIRTH?", body, buttons, ui.icon("rebirth", 5), [], ui.rebirth_bomb_strip())
 
 
 ## Start over: only the rebirth count, rebirth bombs and settings carry over.
@@ -2430,7 +3171,8 @@ func do_rebirth() -> void:
 			keep[sp["id"]] = 0
 	var data := {
 		"version": 1, "rebirths": rebirths + 1, "specials": keep, "just_reborn": true,
-		"sound_on": sound_on, "vibrate_on": vibrate_on, "time": Time.get_unix_time_from_system(),
+		"sound_on": sound_on, "vibrate_on": vibrate_on, "reduce_flash": reduce_flash,
+		"stats": stats, "hints_seen": hints_seen, "time": Time.get_unix_time_from_system(),
 	}
 	var f := FileAccess.open(SAVE_PATH, FileAccess.WRITE)
 	if f:
@@ -2440,18 +3182,18 @@ func do_rebirth() -> void:
 
 
 func _reborn_popup() -> void:
-	var body := "Damage is now [color=#ffcf5a]x%.2f[/color].\nBack to Grasslands - blast your way down again!" % rebirth_mult()
+	var body := "Damage is now [color=#ffcf5a]x%s[/color] in Worlds 1-6, and coins [color=#ffcf5a]x%d[/color] everywhere. Blast your way down again!" % [fmt(rebirth_mult()), int(rebirth_coin_mult())]
 	var spin: Array = []
-	var tex: Texture2D = ui.icon("world", 5, Color("ffcf5a"))
+	var tex: Texture2D = ui.icon("rebirth", 3)
 	if not new_rebirth_bombs.is_empty():
 		for id in new_rebirth_bombs:
-			body += "\n\n[color=#b46bff]NEW BOMB: %s[/color]\n%s" % [special_name(id), Data.get_special(id)["desc"]]
-		tex = ui.micon("bombs", new_rebirth_bombs[0], new_rebirth_bombs[0], 5)
+			body += "\n[color=#b46bff]NEW BOMB: %s[/color] - %s" % [special_name(id), Data.get_special(id)["desc"]]
+		tex = ui.micon("bombs", new_rebirth_bombs[0], new_rebirth_bombs[0], 3)
 		spin = ["bombs", new_rebirth_bombs[0]]
 		ui.rebuild_hotbar()
 	new_rebirth_bombs.clear()
 	sfx.play("unlock")
-	ui.show_popup("REBIRTH #%d!" % rebirths, body, [["LET'S GO", Callable(), "green"]], tex, spin)
+	ui.notify("REBIRTH #%d!" % rebirths, body, tex, spin, Callable(), 8.0)
 	save_game()
 
 
@@ -2467,6 +3209,13 @@ func load_game() -> float:
 		return 0.0
 	coins = float(d.get("coins", 0.0))
 	total_coins = float(d.get("total_coins", 0.0))
+	reduce_flash = bool(d.get("reduce_flash", false))
+	stats = d.get("stats", {}) if typeof(d.get("stats")) == TYPE_DICTIONARY else {}
+	if typeof(d.get("hints_seen")) == TYPE_DICTIONARY:
+		hints_seen = d["hints_seen"]
+	elif total_coins > 0.0 or int(d.get("rebirths", 0)) > 0:
+		for h in HINTS:
+			hints_seen[h] = true   # a save from before the guide existed: you know the game already
 	levels = _int_dict(d.get("levels", {}))
 	ores = _int_dict(d.get("ores", {}))
 	ores_seen = d.get("ores_seen", {}) if typeof(d.get("ores_seen")) == TYPE_DICTIONARY else {}
@@ -2486,6 +3235,7 @@ func load_game() -> float:
 	rebirth_ready = bool(d.get("rebirth_ready", false))
 	just_reborn = bool(d.get("just_reborn", false))
 	relics = {}
+	hide_early_worlds = bool(d.get("hide_early_worlds", false))
 	var rl = d.get("relics", {})
 	if typeof(rl) == TYPE_DICTIONARY:
 		for k in rl:
@@ -2520,6 +3270,8 @@ func load_game() -> float:
 			e["ema_ores"] = src.get("ema_ores", {}) if typeof(src.get("ema_ores")) == TYPE_DICTIONARY else {}
 			if bool(src.get("bedrock_broken", false)):
 				e["bedrock_broken"] = true
+			if bool(src.get("bedrock_done", false)) or bool(src.get("bedrock_broken", false)):
+				e["bedrock_done"] = true
 			e["empty"] = bool(src.get("empty", false))
 			for key in ["hp_scale", "coin_scale"]:
 				if src.has(key):
@@ -2530,6 +3282,15 @@ func load_game() -> float:
 				if absf(old_t - REALM_TOUGHNESS) > 0.0001:
 					e["hp_scale"] = maxf(1.0, float(e["hp_scale"]) * REALM_TOUGHNESS / old_t)
 				e["realm_t"] = REALM_TOUGHNESS
+	# older saves: a world whose vault prize you already have had its bedrock broken before
+	for vault_bomb in Data.SPECIALS:
+		if vault_bomb.has("find") and specials.has(vault_bomb["id"]):
+			worlds[int(vault_bomb["find"])]["bedrock_done"] = true
+	for vault_relic in Data.RELICS:
+		if relics.has(vault_relic["id"]):
+			worlds[int(vault_relic["find"])]["bedrock_done"] = true
+	if rebirth_ready:
+		worlds[Data.STAR_CORE_WORLD]["bedrock_done"] = true
 	_try_unlock()
 	current_world = clampi(current_world, 0, unlocked_worlds - 1)
 	var t := float(d.get("time", 0.0))

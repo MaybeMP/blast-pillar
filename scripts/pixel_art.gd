@@ -10,16 +10,16 @@ const PALETTE := {
 
 ## Bombs without their own drawing use the bomb drawing in their own color.
 const BOMB_LOOKALIKES := ["mega", "chain", "freeze", "sticky", "magnet", "mirror", "blackhole", "bedrock",
-	"spore", "anchor", "overclock", "lightning", "phantom", "supernova"]
+	"spore", "tnt", "gold", "sushi", "grow", "moon"]
 
 ## Colour used for "x" pixels when no tint is given.
 const DEFAULT_TINT := {
 	"bomb": "45403a", "mega": "c0182e", "acid": "6cd43a", "multi": "45403a", "auto": "45403a",
-	"cluster": "e07a2a", "gem": "7fe3ff", "world": "3a7fd6",
+	"cluster": "e07a2a", "gem": "7fe3ff", "world": "3a7fd6", "rebirth": "5fd35a", "hint": "ffd84a",
 	"chain": "8a8f99", "freeze": "8fe6ff", "sticky": "6fd24a", "magnet": "d23a3a", "mirror": "2a2a2a",
 	"blackhole": "3a1866", "bedrock": "55555a",
-	"spore": "b07ad0", "anchor": "4a5a6a", "overclock": "e0b84a", "lightning": "fff04a", "phantom": "c8ffff",
-	"supernova": "ffb04a",
+	"spore": "b07ad0", "tnt": "d93a2a", "gold": "ffc533", "sushi": "f07a4a", "grow": "7ad94a",
+	"moon": "9a9aa6",
 }
 
 const ICONS := {
@@ -246,6 +246,38 @@ const ICONS := {
 		".xxxxxxxxxxxx.",
 		"..xxxxxxxxxx..",
 		"....xxxxxx....",
+	],
+	"rebirth": [   # a redo arrow, going round clockwise
+		"..............",
+		"....xxxxxx....",
+		"...xxxxxxxx...",
+		"..xxx....xx...",
+		".xxx...xxxxxx.",
+		".xx.....xxxx..",
+		".xx......xx...",
+		".xx...........",
+		".xx.......xx..",
+		".xxx.....xxx..",
+		"..xxx...xxx...",
+		"...xxxxxxx....",
+		"....xxxxx.....",
+		"..............",
+	],
+	"hint": [   # a lightbulb
+		".....xxxx.....",
+		"....xhhxxx....",
+		"...xhxxxxxx...",
+		"...xhxxxxxx...",
+		"...xxxxxxxx...",
+		"...xxxxxxxx...",
+		"....xxxxxx....",
+		".....xxxx.....",
+		".....llll.....",
+		".....gggg.....",
+		".....llll.....",
+		"......gg......",
+		"..............",
+		"..............",
 	],
 	"gear": [
 		".....llll.....",

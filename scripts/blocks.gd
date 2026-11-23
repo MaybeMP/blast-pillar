@@ -39,6 +39,17 @@ func _init() -> void:
 	# the portal's frame (never part of a pillar)
 	_add({"id": "portal_frame", "name": "Obsidian", "hp": 1.0e30, "ore": "", "world": -1, "style": "portal",
 		"c1": Color("0c0814"), "c2": Color("1a1128")})
+	# pure gold, shown for a moment by the Golden Bomb (added last so saved worlds keep their numbers)
+	_add({"id": "gold_block", "name": "Gold", "hp": 1.0, "ore": "", "world": 0, "coins": 0.0, "style": "gold",
+		"c1": Color("ffd23a"), "c2": Color("e0a81e")})
+	# Cosmic Eggs buried in each world, set in that world's own rock and about as tough as its
+	# rare ores (also added last, so older saves keep their block numbers)
+	for w in Data.WORLDS.size():
+		var world: Dictionary = Data.WORLDS[w]
+		var host: Dictionary = world["layers"][2]
+		_add({"id": "egg_" + world["id"], "name": "Cosmic Egg", "hp": float(world["hard"]) * 13.0,
+			"ore": Data.BEDROCK_BOMB_ORE, "world": w, "style": _ore_host_style(host),
+			"c1": Data.color(host["c1"]), "c2": Data.color(host["c2"]), "oc": Color("ffffff"), "rank": 5})
 	_build_atlas()
 
 
@@ -423,7 +434,36 @@ func _draw_style(img: Image, rng: RandomNumberGenerator, style: String, c1: Colo
 		"bedrock": _bedrock(img, rng, c1, c2)
 		"cache": _cache(img, rng, c1, c2)
 		"portal": _portal_obsidian(img, rng)
+		"gold": _gold_block(img, rng)
 		_: _stone(img, rng, c1, c2, 7, 1.0, false)
+
+
+## A block of solid gold: bright and smooth, light edges top-left, darker bottom-right, a few glints.
+func _gold_block(img: Image, rng: RandomNumberGenerator) -> void:
+	var base := Color("fcd73c")
+	var light := Color("fff3a0")
+	var mid := Color("f2c22a")
+	var dark := Color("c8901a")
+	for y in TILE:
+		for x in TILE:
+			var c := base
+			if (x + y) % 7 == 0 and rng.randf() < 0.5:
+				c = mid
+			img.set_pixel(x, y, c)
+	for i in TILE:
+		img.set_pixel(i, 0, light)
+		img.set_pixel(0, i, light)
+		img.set_pixel(i, TILE - 1, dark)
+		img.set_pixel(TILE - 1, i, dark)
+	for i in range(2, TILE - 4):
+		img.set_pixel(i, 2, light.lerp(base, 0.4))
+		img.set_pixel(2, i, light.lerp(base, 0.4))
+	for i in 4:
+		var px := rng.randi_range(3, TILE - 4)
+		var py := rng.randi_range(3, TILE - 4)
+		img.set_pixel(px, py, Color.WHITE)
+		img.set_pixel(px + 1, py, light)
+		img.set_pixel(px, py + 1, light)
 
 
 func _shades(c: Color) -> Array:

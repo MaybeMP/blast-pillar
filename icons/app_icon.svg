@@ -1,0 +1,48 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1024" height="1024" viewBox="0 0 1024 1024">
+  <defs>
+    <linearGradient id="sky" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#3d7fd0"/>
+      <stop offset="1" stop-color="#9fd0f2"/>
+    </linearGradient>
+    <radialGradient id="glow" cx="0.5" cy="0.5" r="0.5">
+      <stop offset="0" stop-color="#fff3b0" stop-opacity="0.95"/>
+      <stop offset="0.55" stop-color="#ffd24a" stop-opacity="0.55"/>
+      <stop offset="1" stop-color="#ffd24a" stop-opacity="0"/>
+    </radialGradient>
+    <radialGradient id="bomb" cx="0.38" cy="0.34" r="0.7">
+      <stop offset="0" stop-color="#4a4f5a"/>
+      <stop offset="0.55" stop-color="#1e2027"/>
+      <stop offset="1" stop-color="#0d0e12"/>
+    </radialGradient>
+  </defs>
+  <rect width="1024" height="1024" fill="url(#sky)"/>
+  <circle cx="512" cy="330" r="330" fill="url(#glow)"/>
+
+  <!-- the pillar: grass, dirt and stone -->
+  <polygon points="302,500 512,605 512,935 302,830" fill="#8a8f99"/>
+  <polygon points="512,605 722,500 722,830 512,935" fill="#6c717b"/>
+  <polygon points="302,500 512,605 512,745 302,640" fill="#8f6339"/>
+  <polygon points="512,605 722,500 722,640 512,745" fill="#734d2a"/>
+  <polygon points="302,500 512,605 512,650 302,545" fill="#5aa83c"/>
+  <polygon points="512,605 722,500 722,545 512,650" fill="#468a2e"/>
+  <polygon points="512,395 722,500 512,605 302,500" fill="#78c552"/>
+  <!-- a couple of block seams for a clean voxel feel -->
+  <g stroke="#000" stroke-opacity="0.12" stroke-width="6" fill="none">
+    <line x1="407" y1="552" x2="407" y2="882"/>
+    <line x1="617" y1="552" x2="617" y2="882"/>
+    <line x1="302" y1="735" x2="512" y2="840"/>
+    <line x1="512" y1="840" x2="722" y2="735"/>
+  </g>
+
+  <!-- the bomb -->
+  <ellipse cx="512" cy="520" rx="150" ry="46" fill="#000" fill-opacity="0.22"/>
+  <circle cx="512" cy="370" r="150" fill="url(#bomb)"/>
+  <ellipse cx="462" cy="318" rx="44" ry="30" fill="#fff" fill-opacity="0.35" transform="rotate(-30 462 318)"/>
+  <rect x="560" y="196" width="70" height="56" rx="8" fill="#3a3d46" transform="rotate(32 595 224)"/>
+  <path d="M 612 200 C 640 160, 690 170, 700 128" stroke="#e8d9b0" stroke-width="16" fill="none" stroke-linecap="round"/>
+  <!-- spark -->
+  <g transform="translate(704 118)">
+    <polygon points="0,-62 14,-16 60,-20 22,8 38,54 0,26 -38,54 -22,8 -60,-20 -14,-16" fill="#ff8a1f"/>
+    <polygon points="0,-34 8,-9 33,-11 12,4 21,30 0,14 -21,30 -12,4 -33,-11 -8,-9" fill="#ffe14a"/>
+  </g>
+</svg>

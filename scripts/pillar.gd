@@ -125,8 +125,8 @@ func generate(widx: int, seed_val: int) -> void:
 
 	_veins(rng, world["ores"], 1, depth - 4, int(W * W * depth * 0.008), 0.0)
 
-	# treasure: exactly 5, just above the bedrock (not the Cosmic Egg - that's the reward for
-	# reaching the bottom of World 6)
+	# treasure: exactly 5, just above the bedrock (World 6's treasure is the Cosmic Egg, which is
+	# buried all the way down instead - see _bury_eggs)
 	var tb: int = blocks.index_of("ore_" + world["treasure"]["id"])
 	var placed := 0 if world["treasure"]["id"] != Data.BEDROCK_BOMB_ORE else 5
 	while placed < 5:
@@ -135,10 +135,34 @@ func generate(widx: int, seed_val: int) -> void:
 			types[i] = tb
 			placed += 1
 
+	_bury_eggs(seed_val)
+
 	_gen_below(seed_val)
 	_recompute_all_columns()
 	_clear_chunks()
 	_make_walls()
+
+
+## Cosmic Eggs: single blocks spread evenly from near the top to a few layers above the bedrock,
+## away from the edges, so a normal dig turns them all up. (Own random stream, so the rest of
+## the pillar comes out the same as before.)
+func _bury_eggs(seed_val: int) -> void:
+	var n: int = int(Data.EGGS_PER_WORLD[world_index])
+	var eb: int = blocks.index_of("egg_" + Data.WORLDS[world_index]["id"])
+	if n <= 0 or eb < 0:
+		return
+	var rng := RandomNumberGenerator.new()
+	rng.seed = seed_val * 53 + 11
+	var top := 3
+	var bottom := depth - 12
+	for k in n:
+		var d0 := top + (bottom - top) * k / n
+		var d1 := maxi(d0, top + (bottom - top) * (k + 1) / n - 1)
+		for attempt in 20:
+			var i := _idx(rng.randi_range(2, W - 3), rng.randi_range(d0, d1), rng.randi_range(2, W - 3))
+			if types[i] != eb:
+				types[i] = eb
+				break
 
 
 ## Ore veins between layers d_from..d_to. rare_boost > 0 makes rare ores more common (vaults).
@@ -352,12 +376,89 @@ func high_point(tries := 3) -> Vector3:
 	return voxel_center(best_k % W, mini(col_top[best_k], H - 1), best_k / W)
 
 
-## True once you've dug down to the bedrock (this opens the portal).
+## True once the pillar is nearly gone: the bedrock shows somewhere AND nothing left stands
+## more than PORTAL_LAYERS_LEFT - 1 layers above it. This opens the portal to the next world.
+const PORTAL_LAYERS_LEFT := 5
+
 func reached_bedrock() -> bool:
+	var exposed := false
+	var highest := H
 	for v in col_top:
 		if v >= depth:
-			return true
-	return false
+			exposed = true
+		highest = mini(highest, v)
+	return exposed and depth - highest < PORTAL_LAYERS_LEFT
+
+
+## Layer under a world position (0 = top of the pillar).
+func layer_at(p: Vector3) -> int:
+	return int(floor(-p.y / VS))
+
+
+## The highest layer anything still stands on (the top of the tallest column).
+func highest_layer() -> int:
+	var highest := H
+	for v in col_top:
+		highest = mini(highest, v)
+	return highest
+
+
+## Every breakable block (not bedrock, and nothing under intact bedrock) in layers d0..d1-1,
+## as [index, type, position].
+func cells_in_layers(d0: int, d1: int) -> Array:
+	var out: Array = []
+	for d in range(maxi(cut, d0), mini(_hurt_limit(), d1)):
+		for z in W:
+			for x in W:
+				var i := _idx(x, d, z)
+				var t := types[i]
+				if t != 0 and t != bedrock_idx:
+					out.append([i, t, voxel_center(x, d, z)])
+	return out
+
+
+## Show blocks as another type for a moment (the Golden Bomb's gold) without changing what they are.
+func paint_cells(cells: Array, t: int) -> void:
+	var layers := {}
+	for c in cells:
+		types[c[0]] = t
+		layers[int(c[0]) / (W * W)] = true
+	for d in layers:
+		_mark_dirty(d)
+
+
+## Break the given cells (as returned by cells_in_layers). They count as their original type.
+func break_cells(cells: Array) -> Dictionary:
+	var broken: Array = []
+	var touched := {}
+	for c in cells:
+		var i: int = c[0]
+		if types[i] == 0:
+			continue
+		types[i] = 0
+		hp[i] = 255
+		broken.append([c[1], c[2]])
+		touched[i % (W * W)] = true
+		_mark_dirty(i / (W * W))
+	for k in touched:
+		_recompute_column(k)
+	if not touched.is_empty():
+		_mark_dirty(0)   # plants on top go too
+	return {"broken": broken, "damaged": 0, "plants": []}
+
+
+## Break every block for which `gone(x, d, z)` returns true.
+## Only looks at layers d0..d1-1. Used by the Sword Bomb's slices and the Moon Bomb.
+func break_where(d0: int, d1: int, gone: Callable) -> Dictionary:
+	var cells: Array = []
+	for d in range(maxi(cut, d0), mini(_hurt_limit(), d1)):
+		for z in W:
+			for x in W:
+				var i := _idx(x, d, z)
+				var t := types[i]
+				if t != 0 and t != bedrock_idx and gone.call(x, d, z):
+					cells.append([i, t, voxel_center(x, d, z)])
+	return break_cells(cells)
 
 
 func bedrock_broken() -> bool:

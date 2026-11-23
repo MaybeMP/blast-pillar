@@ -6,7 +6,7 @@ const RADIUS := 0.28
 ## How big each bomb model is drawn (longest side, in meters). The cluster is wider because of its rope.
 const SIZES := {"bomb": 0.62, "mini": 0.5, "drill": 0.62, "cluster": 0.9, "acid": 0.66, "mega": 0.95,
 	"chain": 0.62, "freeze": 0.78, "magnet": 0.62, "mirror": 0.62, "blackhole": 1.0, "bedrock": 0.8,
-	"spore": 0.62, "anchor": 0.75, "overclock": 0.62, "lightning": 0.62, "phantom": 0.62, "supernova": 0.9}
+	"spore": 0.62, "tnt": 0.62, "gold": 0.66, "sushi": 0.7, "grow": 0.66, "moon": 0.9}
 
 var game
 var kind := "bomb"
@@ -66,6 +66,20 @@ func _ready() -> void:
 	body_entered.connect(_on_hit)
 	visual = game.make_model("bombs", kind, size, game.bomb_color(kind))
 	add_child(visual)
+	if kind == "tnt":
+		lock_rotation = true      # a block of TNT stays upright, like in Minecraft
+		visual.rotation.y = randf() * TAU
+		_tnt_flash = StandardMaterial3D.new()
+		_tnt_flash.shading_mode = BaseMaterial3D.SHADING_MODE_UNSHADED
+		_tnt_flash.transparency = BaseMaterial3D.TRANSPARENCY_ALPHA
+		_tnt_flash.albedo_color = Color(1, 1, 1, 0.0)
+		_set_overlay(visual, _tnt_flash)
+		_tnt_scale = visual.scale
+		return
+	if kind == "grow":
+		lock_rotation = true      # no tumbling: the red target on its front always faces the player
+		_face_camera()
+		return
 	if kind == "drill":
 		lock_rotation = true      # falls upright, bit pointing down
 		spinner = _find_spinner(visual)
@@ -100,6 +114,12 @@ func _on_hit(body: Node) -> void:
 	if kind == "sticky":
 		_stick()
 		return
+	if kind == "grow":
+		# sits where it lands and soaks up taps until the game sets it off
+		if not stuck:
+			_stick()
+			game.grow_landed(self)
+		return
 	if body is RigidBody3D:
 		# landed on another bomb: a pile lights up once the bomb underneath has hit the blocks
 		if not body.get("touched_blocks"):
@@ -111,6 +131,11 @@ func _on_hit(body: Node) -> void:
 		return
 	if fuse_left < 0.0:
 		fuse_left = fuse
+		if kind == "tnt":
+			# primed: the fuse hisses and it gives a little hop
+			game.sfx.play("tnt_fuse", 1.0, 2.0, 0.05)
+			apply_central_impulse.call_deferred(Vector3(0, mass * 2.2, 0))
+			return
 		game.sfx.play("land", randf_range(0.9, 1.1), -8.0)
 
 
@@ -130,7 +155,7 @@ func _stick() -> void:
 	set_deferred("angular_velocity", Vector3.ZERO)
 	if sticky_group != null:
 		game.sticky_landed(sticky_group)
-	elif fuse_left < 0.0:
+	elif fuse_left < 0.0 and kind != "grow":
 		fuse_left = fuse
 	game.sfx.play("land", randf_range(1.3, 1.6), -10.0)
 
@@ -160,20 +185,58 @@ func _physics_process(delta: float) -> void:
 		if fuse_left <= 0.0:
 			explode()
 			return
-	if age > 12.0:
+	if age > (30.0 if kind == "grow" else 12.0):
 		explode()
 		return
 	if global_position.y < game.pillar.bottom_y() - 6.0:
 		queue_free()  # fell through the bottom of the pillar
 
 
+## TNT: once lit it flashes white every quarter second, and swells up just before it blows,
+## the way primed TNT does in Minecraft.
+var _tnt_flash: StandardMaterial3D
+var _tnt_scale := Vector3.ONE
+
+func _set_overlay(node: Node, m: Material) -> void:
+	if node is MeshInstance3D:
+		(node as MeshInstance3D).material_overlay = m
+	for c in node.get_children():
+		_set_overlay(c, m)
+
+
+func _tnt_animate() -> void:
+	if _tnt_flash == null or fuse_left < 0.0:
+		return
+	var burnt := fuse - fuse_left
+	_tnt_flash.albedo_color.a = 0.8 if int(burnt / 0.25) % 2 == 0 else 0.0
+	if fuse_left < 0.5:
+		var f := 1.0 - fuse_left / 0.5
+		f = f * f * f * f
+		visual.scale = _tnt_scale * (1.0 + f * 0.3)
+
+
+## Grow Bomb: its model's front (-Z, where the red target is painted) turns to look at the camera.
+func _face_camera() -> void:
+	var cam: Camera3D = game.camera
+	if cam == null or not visual.is_inside_tree():
+		return
+	var to_cam := cam.global_position - visual.global_position
+	if to_cam.length_squared() < 0.0001:
+		return
+	visual.look_at(cam.global_position, Vector3.UP)
+
+
 func _process(delta: float) -> void:
+	_tnt_animate()
+	if kind == "grow":
+		_face_camera()
 	if spinner:
 		spinner.rotate_object_local(Vector3.UP, (32.0 if drilling else 9.0) * delta)
 	spark_timer -= delta
-	if spark_timer <= 0.0:
+	if spark_timer <= 0.0 and kind != "tnt":   # TNT is just a block, no fuse sticking out
 		spark_timer = 0.06
-		game.fx.spark(global_position + global_transform.basis.y * 0.4)
+		var up: Vector3 = visual.global_transform.basis.y.normalized() if kind == "grow" else global_transform.basis.y
+		game.fx.spark(global_position + up * 0.4)
 
 
 func explode() -> void:

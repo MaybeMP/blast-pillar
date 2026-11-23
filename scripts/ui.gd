@@ -22,6 +22,7 @@ var st := {}
 var icon_cache := {}
 
 var coins_label: Label
+var rebirth_btn: Button
 var world_label: Label
 var depth_label: Label
 var depth_bar: Control
@@ -29,12 +30,18 @@ var hint_label: Label
 var perf_label: Label
 var perf_timer := 0.0
 var toast_box: VBoxContainer
+var hud_panel: PanelContainer
+var note_layer: Control
+var notes: Array = []   # notifications on screen or waiting: {node, time, x, y}
 var toasts := {}
 var toast_timer := 0.0
 var hotbar := {}
 var hotbar_box: Control
 var tab_buttons := {}
+var tab_labels := {}
+var flippers: Array = []   # 2D icons that 'spin' by squashing side to side
 var current_tab := ""
+var tab_scroll := {}      # tab -> how far down it was scrolled
 var scroll: ScrollContainer
 var content: VBoxContainer
 var refreshers: Array[Callable] = []
@@ -78,6 +85,7 @@ func build() -> void:
 	_build_toasts()
 	_build_hint()
 	_build_perf()
+	_build_notes()
 	_build_popup_layer()
 	switch_tab("upgrades")
 
@@ -106,9 +114,13 @@ func _make_styles() -> void:
 	st["green_p"] = PA.frame(Color("5aa834"), Color("a4e877"), Color("336a1b"), 2, true, btn_pad_down)
 	st["red"] = PA.frame(Color("d9472c"), Color("ff8a6a"), Color("8f2414"), 2, false, btn_pad)
 	st["red_p"] = PA.frame(Color("bf3d24"), Color("ff8a6a"), Color("701c10"), 2, true, btn_pad_down)
+	st["blue"] = PA.frame(Color("3a7bd5"), Color("7fb4ff"), Color("1f4c8f"), 2, false, btn_pad)
+	st["blue_p"] = PA.frame(Color("3169bb"), Color("7fb4ff"), Color("193f78"), 2, true, btn_pad_down)
 	st["gray"] = PA.frame(Color("4f4a44"), Color("625c55"), Color("37332f"), 2, false, btn_pad)
 	st["tab_on"] = PA.frame(Color("5a4d41"), Color("7a6a5a"), Color("3d342c"), 2, false, Vector4(px(6), px(8), px(6), px(10)))
 	st["tab_off"] = PA.frame(Color("2a231d"), Color("3a312a"), Color("1a1512"), 2, false, Vector4(px(6), px(8), px(6), px(10)))
+	st["note_epic"] = PA.frame(Color(0.2, 0.08, 0.3, 0.97), Color(1.0, 0.82, 0.35, 1.0), Color(0.45, 0.2, 0.6, 1.0), 3, false, Vector4(px(14), px(10), px(16), px(11)))
+	st["note"] = PA.frame(Color(0.13, 0.1, 0.08, 0.95), Color(0.36, 0.3, 0.22, 0.95), Color(0.05, 0.04, 0.03, 0.95), 3, false, Vector4(px(12), px(8), px(14), px(9)))
 	st["toast"] = PA.frame(Color(0.1, 0.08, 0.06, 0.88), Color(0.25, 0.21, 0.17, 0.88), Color(0.05, 0.04, 0.03, 0.88), 2, false, Vector4(px(8), px(4), px(12), px(5)))
 	st["slot_btn"] = PA.frame(Color("2a231d"), Color("4a4038"), Color("100c0a"), 2, true, Vector4(px(4), px(4), px(4), px(4)))
 	st["slot_ready"] = PA.frame(Color("3a2f20"), Color("ffd977"), Color("8a5f15"), 2, true, Vector4(px(4), px(4), px(4), px(4)))
@@ -160,7 +172,15 @@ func _make_theme() -> Theme:
 func icon(name: String, scale := 3, tint := Color(-1, 0, 0)) -> Texture2D:
 	var key := "%s_%d_%s" % [name, scale, tint.to_html()]
 	if not icon_cache.has(key):
-		icon_cache[key] = PA.icon(name, scale, tint)
+		var png := "res://icons/%s.png" % name
+		if ResourceLoader.exists(png):
+			# a ready-made picture (e.g. the 32x32 rebirth arrows), zoomed to about the same size
+			var im: Image = (load(png) as Texture2D).get_image()
+			var f := maxi(1, int(round(scale * 16.0 / im.get_width())))
+			im.resize(im.get_width() * f, im.get_height() * f, Image.INTERPOLATE_NEAREST)
+			icon_cache[key] = ImageTexture.create_from_image(im)
+		else:
+			icon_cache[key] = PA.icon(name, scale, tint)
 	return icon_cache[key]
 
 
@@ -240,6 +260,8 @@ func set_model_icon(target: TextureRect, folder: String, id: String, fallback: S
 			_waiting[key].append([target, scale])
 		return
 	var size := float(strip.get_height())
+	if target.has_meta("fixed_size"):
+		size = float(target.get_meta("fixed_size"))
 	# size first, then the texture, so the wide strip never stretches the layout
 	target.expand_mode = TextureRect.EXPAND_IGNORE_SIZE
 	target.stretch_mode = TextureRect.STRETCH_SCALE
@@ -249,6 +271,24 @@ func set_model_icon(target: TextureRect, folder: String, id: String, fallback: S
 	target.material = spin_material()
 	target.texture = strip
 	target.size = Vector2(size, size)
+
+
+## A small spinning icon of a set size: the model's spin loop if it has one, otherwise the
+## picture turning side to side like a flipping coin.
+func _spin_icon(folder: String, id: String, fallback: Texture2D, size: float) -> TextureRect:
+	var ic := TextureRect.new()
+	ic.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	ic.expand_mode = TextureRect.EXPAND_IGNORE_SIZE
+	ic.stretch_mode = TextureRect.STRETCH_KEEP_ASPECT_CENTERED
+	ic.custom_minimum_size = Vector2(size, size)
+	ic.size_flags_vertical = Control.SIZE_SHRINK_CENTER
+	ic.set_meta("fixed_size", size)
+	if folder != "" and game.model_icons.has("%s/%s" % [folder, id]):
+		set_model_icon(ic, folder, id, "gem", 3)
+	else:
+		ic.texture = fallback
+		flippers.append(ic)
+	return ic
 
 
 ## Called by the game when a spinning icon loop has finished rendering.
@@ -299,6 +339,7 @@ func _style_button(b: Button, style: String) -> void:
 
 func _build_hud() -> void:
 	var hud := PanelContainer.new()
+	hud_panel = hud
 	hud.add_theme_stylebox_override("panel", st["hud"])
 	hud.position = Vector2(px(10), top_inset + px(8))
 	hud.size = Vector2(vp.x - px(20), 0)
@@ -317,7 +358,23 @@ func _build_hud() -> void:
 	coins_label = _label("0", fs(50), C_GOLD, true)
 	coins_label.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	coins_label.vertical_alignment = VERTICAL_ALIGNMENT_CENTER
+	coins_label.clip_text = true
 	row.add_child(coins_label)
+
+	# rebirth button: shows once you can rebirth (or have before); sits just left of the world progress
+	rebirth_btn = Button.new()
+	rebirth_btn.icon = icon("rebirth", 4)
+	rebirth_btn.custom_minimum_size = Vector2(px(60), px(60))
+	rebirth_btn.size_flags_vertical = Control.SIZE_SHRINK_CENTER
+	rebirth_btn.icon_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	rebirth_btn.add_theme_stylebox_override("normal", st["slot_btn"])
+	rebirth_btn.add_theme_stylebox_override("hover", st["slot_btn"])
+	rebirth_btn.add_theme_stylebox_override("pressed", st["slot"])
+	rebirth_btn.pressed.connect(func():
+		game.sfx.play("click")
+		game.show_rebirth_popup())
+	rebirth_btn.visible = false
+	row.add_child(rebirth_btn)
 
 	var right := VBoxContainer.new()
 	right.custom_minimum_size = Vector2(px(240), 0)
@@ -380,19 +437,37 @@ func _build_panel() -> void:
 	var tabs := HBoxContainer.new()
 	tabs.add_theme_constant_override("separation", int(px(6)))
 	v.add_child(tabs)
-	for t in [["upgrades", "UPGRADES"], ["bombs", "BOMBS"], ["ores", "ORES"], ["worlds", "WORLDS"]]:
+	# each tab: a little spinning icon, then its name
+	var tab_icons := {
+		"upgrades": ["", "", icon("coin", 2)],
+		"bombs": ["bombs", "bomb", icon("bomb", 2)],
+		"ores": ["ores", "diamond", ore_icon("diamond", 2)],
+		"worlds": ["world", "0", world_icon(0, 2)],
+		"relics": ["relics", "golden_bomb", icon("gem", 2, Color("ffc533"))],
+	}
+	for t in [["upgrades", "UPGRADES"], ["bombs", "BOMBS"], ["ores", "ORES"], ["worlds", "WORLDS"], ["relics", "RELICS"]]:
 		var b := Button.new()
-		b.text = t[1]
+		b.text = ""
 		b.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 		b.custom_minimum_size = Vector2(px(0), px(58))
-		b.add_theme_font_size_override("font_size", fs(25))
-		for c in ["font_color", "font_hover_color", "font_pressed_color", "font_hover_pressed_color"]:
-			b.add_theme_color_override(c, C_TEXT)
 		b.pressed.connect(func():
 			game.sfx.play("click")
 			switch_tab(t[0]))
 		tabs.add_child(b)
 		tab_buttons[t[0]] = b
+		var hb := HBoxContainer.new()
+		hb.set_anchors_preset(Control.PRESET_FULL_RECT)
+		hb.alignment = BoxContainer.ALIGNMENT_CENTER
+		hb.add_theme_constant_override("separation", int(px(4)))
+		hb.mouse_filter = Control.MOUSE_FILTER_IGNORE
+		b.add_child(hb)
+		var info: Array = tab_icons[t[0]]
+		hb.add_child(_spin_icon(info[0], info[1], info[2], 56.0 if px(58) >= 64.0 else 28.0))
+		var l := _label(t[1], fs(25), C_TEXT, true)
+		l.vertical_alignment = VERTICAL_ALIGNMENT_CENTER
+		hb.add_child(l)
+		tab_labels[t[0]] = l
+	update_tabs()
 
 	scroll = ScrollContainer.new()
 	scroll.size_flags_vertical = Control.SIZE_EXPAND_FILL
@@ -405,25 +480,53 @@ func _build_panel() -> void:
 	scroll.add_child(content)
 
 
+## The RELICS tab only shows once you own a relic. With five tabs the labels get a bit smaller.
+func update_tabs() -> void:
+	if not tab_buttons.has("relics"):
+		return
+	var show_relics: bool = not game.relics.is_empty()
+	tab_buttons["relics"].visible = show_relics
+	for k in tab_labels:
+		tab_labels[k].add_theme_font_size_override("font_size", fs(20) if show_relics else fs(25))
+	if not show_relics and current_tab == "relics":
+		switch_tab("upgrades")
+
+
 func switch_tab(id: String) -> void:
+	if id == "relics" and game.relics.is_empty():
+		id = "upgrades"
+	if current_tab != "":
+		tab_scroll[current_tab] = scroll.scroll_vertical   # each tab remembers where you scrolled to
 	current_tab = id
 	for k in tab_buttons:
 		var b: Button = tab_buttons[k]
 		var s: StyleBox = st["tab_on"] if k == id else st["tab_off"]
 		for state in ["normal", "hover", "pressed", "hover_pressed"]:
 			b.add_theme_stylebox_override(state, s)
-		b.add_theme_color_override("font_color", C_GOLD if k == id else C_SUB)
-		b.add_theme_color_override("font_hover_color", C_GOLD if k == id else C_SUB)
+		if tab_labels.has(k):
+			tab_labels[k].add_theme_color_override("font_color", C_GOLD if k == id else C_SUB)
 	for c in content.get_children():
+		content.remove_child(c)
 		c.queue_free()
 	refreshers.clear()
-	scroll.scroll_vertical = 0
 	match id:
 		"upgrades": _tab_upgrades()
 		"bombs": _tab_bombs()
 		"ores": _tab_ores()
 		"worlds": _tab_worlds()
+		"relics": _tab_relics()
 	refresh()
+	_restore_scroll(id, int(tab_scroll.get(id, 0)))
+
+
+## The new rows need a frame to be laid out before the list can scroll that far.
+func _restore_scroll(id: String, to: int) -> void:
+	scroll.scroll_vertical = to
+	for i in 2:
+		await get_tree().process_frame
+		if current_tab != id:
+			return
+		scroll.scroll_vertical = to
 
 
 func rebuild_tab() -> void:
@@ -546,14 +649,10 @@ func _tab_upgrades() -> void:
 				r["button"].text = game.fmt(c)
 				r["button"].icon = icon("coin", 2)
 				r["button"].disabled = game.coins < c)
-	_relic_rows()
 
 
-## Relics: shown once you can reach the Deep Realms (or already own one).
-func _relic_rows() -> void:
-	if game.unlocked_worlds <= Data.ORIGINAL_WORLDS and game.relics.is_empty():
-		return
-	content.add_child(_label("RELICS", fs(25), C_GOLD, true))
+## Relics tab: the ones you own, plus a "???" for each one still out there.
+func _tab_relics() -> void:
 	for rl in Data.RELICS:
 		var rid: String = rl["id"]
 		var col := Color(rl["col"])
@@ -578,11 +677,11 @@ func _tab_bombs() -> void:
 	for s in Data.SPECIALS:
 		var sid: String = s["id"]
 		if s.has("rebirth"):
-			if not rebirth_row_done:
-				rebirth_row_done = true
-				_rebirth_row()
 			if game.rebirths < 1 and not game.specials.has(sid):
 				continue   # the rebirth bombs show up after your first rebirth
+			if not rebirth_row_done:
+				rebirth_row_done = true
+				content.add_child(_label("REBIRTH BOMBS (PERMANENT)", fs(25), C_GOLD, true))
 		var r := _row(micon("bombs", sid, sid), s["name"])
 		set_model_icon(r["icon"], "bombs", sid, sid, 3)
 		r["button"].pressed.connect(func():
@@ -590,8 +689,6 @@ func _tab_bombs() -> void:
 				game.fire_special(sid)
 			else:
 				game.unlock_special(sid))
-		if game.specials.has(sid):
-			r["button"].custom_minimum_size = Vector2(px(130), px(72))
 		# reload upgrade button (shows after unlocking)
 		var up := Button.new()
 		up.custom_minimum_size = Vector2(px(150), px(72))
@@ -630,7 +727,6 @@ func _tab_bombs() -> void:
 				r["title"].text = s["name"]
 				r["icon"].modulate = Color.WHITE
 			if game.specials.has(sid):
-				var cd: float = game.cooldowns.get(sid, 0.0)
 				var lvl: int = game.special_level(sid)
 				var reload_txt := "Reload [color=#ffcf5a]%ds[/color]" % int(round(game.special_cooldown(sid)))
 				if lvl < Data.SPECIAL_MAX_LEVEL:
@@ -643,10 +739,7 @@ func _tab_bombs() -> void:
 					if copy != "":
 						r["info"].text += " ([color=#ffcf5a]%ds[/color])" % int(round(game.special_cooldown(copy)))
 					r["info"].text += "\nNext copy: " + ("[color=#b46bff]%s[/color]" % game.special_name(copy) if copy != "" else "[color=#b9a990]locked until you fire another special bomb[/color]")
-				r["button"].text = "FIRE"
-				r["button"].icon = null
-				_style_button(r["button"], "red")
-				r["button"].disabled = cd > 0.0 or (sid == "mirror" and game.mirror_waiting())
+				r["button"].visible = false   # fired from the hotbar
 				up.visible = sid != "mirror"   # its reload comes from the copied bomb, so nothing to upgrade
 				if lvl >= Data.SPECIAL_MAX_LEVEL:
 					up.text = "MAX"
@@ -663,26 +756,32 @@ func _tab_bombs() -> void:
 				_set_cost_button(r["button"], s["cost"], "UNLOCK"))
 
 
-## Rebirth: shows once you've broken the Star Core (or have reborn before).
-func _rebirth_row() -> void:
-	if not game.rebirth_ready and game.rebirths < 1:
-		return
-	var head := _label("REBIRTH", fs(25), C_GOLD, true)
-	content.add_child(head)
-	var r := _row(icon("world", 3, Color("ffcf5a")), "Rebirth")
-	r["button"].text = "REBIRTH"
-	_style_button(r["button"], "red")
-	r["button"].pressed.connect(func():
-		game.sfx.play("click")
-		game.show_rebirth_popup())
-	refreshers.append(func():
-		var line := "Rebirths: [color=#ffcf5a]%d[/color]   Damage [color=#ffcf5a]x%.2f[/color]" % [game.rebirths, game.rebirth_mult()]
-		if game.rebirth_ready:
-			line += "\nReady! Start over with +%d%% damage." % int(Data.REBIRTH_DAMAGE * 100)
-		else:
-			line += "\nBreak the Star Core at the bottom of %s's vault to rebirth again." % Data.WORLDS[Data.STAR_CORE_WORLD]["name"]
-		r["info"].text = line
-		r["button"].disabled = not game.rebirth_ready)
+## Rebirth popup: the five rebirth bombs spinning in a row, black until you've unlocked them,
+## each with the number of rebirths it needs underneath.
+func rebirth_bomb_strip() -> Control:
+	var hb := HBoxContainer.new()
+	hb.alignment = BoxContainer.ALIGNMENT_CENTER
+	hb.add_theme_constant_override("separation", int(px(14)))
+	for sp in Data.SPECIALS:
+		if not sp.has("rebirth"):
+			continue
+		var sid: String = sp["id"]
+		var owned: bool = game.specials.has(sid)
+		var col := VBoxContainer.new()
+		col.add_theme_constant_override("separation", int(px(2)))
+		var ic := TextureRect.new()
+		ic.stretch_mode = TextureRect.STRETCH_KEEP_CENTERED
+		ic.size_flags_horizontal = Control.SIZE_SHRINK_CENTER
+		col.add_child(ic)
+		# a locked bomb with no model yet spins as a plain bomb silhouette
+		var shown := sid if owned or game.has_model("bombs", sid) else "bomb"
+		set_model_icon(ic, "bombs", shown, sid, 3)
+		ic.modulate = Color.WHITE if owned else Color(0, 0, 0, 0.8)
+		var n := _label(str(int(sp["rebirth"])), fs(26), Color("9be36b") if owned else C_SUB, true)
+		n.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+		col.add_child(n)
+		hb.add_child(col)
+	return hb
 
 
 func _bedrock_row() -> void:
@@ -695,18 +794,23 @@ func _bedrock_row() -> void:
 		var w: int = game.current_world
 		var tid: String = Data.BEDROCK_BOMB_ORE
 		var have := int(game.ores.get(tid, 0))
-		var tname: String = game.ore_table[tid]["name"]
-		var egg_world: String = Data.WORLDS[int(game.ore_table[tid]["world"])]["name"]
+		var tname: String = "Cosmic Eggs"
+		var cost := Data.bedrock_cost(w)
 		var state: String = game.bedrock_bomb_state()
 		var line := "One use: shatters the whole bedrock layer of %s." % Data.WORLDS[w]["name"]
 		match state:
 			"not_reached":
-				line += "\n[color=#b9a990]Dig down to the bedrock first.[/color]  Costs %d/%d %s (from the bottom of %s)" % [have, Data.BEDROCK_BOMB_COST, tname, egg_world]
+				line += "\n[color=#b9a990]Dig down to the bedrock first.[/color]  Costs %d/%d %s (buried in every world)" % [have, cost, tname]
 			"broken":
 				line = "The bedrock of %s is already broken. Dig the vault!" % Data.WORLDS[w]["name"]
+			"falling":
+				line += "\n[color=#9be36b]On its way down...[/color]"
+			"out_of_order":
+				var nb: int = game.next_bedrock_world()
+				line += "\n[color=#ff6b5a]Bedrock Bombs go in order, World 1 to 12. Break the bedrock of %s first.[/color]" % Data.WORLDS[nb]["name"]
 			_:
-				var col := "9be36b" if have >= Data.BEDROCK_BOMB_COST else "ff6b5a"
-				line += "\nCosts [color=#%s]%d/%d[/color] %s (from the bottom of %s)" % [col, have, Data.BEDROCK_BOMB_COST, tname, egg_world]
+				var col := "9be36b" if have >= cost else "ff6b5a"
+				line += "\nCosts [color=#%s]%d/%d[/color] %s (buried in every world)" % [col, have, cost, tname]
 		r["info"].text = line
 		r["button"].disabled = state != "ready")
 
@@ -820,10 +924,27 @@ func _ore_cell(oid: String) -> Control:
 	return cell
 
 
+const EARLY_WORLDS := 5   # Worlds 1-5 can be folded away in the WORLDS tab
+
 func _tab_worlds() -> void:
+	var fold := Button.new()
+	fold.text = ("SHOW WORLDS 1-%d" if game.hide_early_worlds else "HIDE WORLDS 1-%d") % EARLY_WORLDS
+	fold.custom_minimum_size = Vector2(0, px(60))
+	fold.add_theme_font_size_override("font_size", fs(25))
+	fold.mouse_filter = Control.MOUSE_FILTER_PASS
+	_style_button(fold, "green" if game.hide_early_worlds else "gold")
+	fold.pressed.connect(func():
+		game.sfx.play("click")
+		game.hide_early_worlds = not game.hide_early_worlds
+		game.save_game()
+		rebuild_tab())
+	content.add_child(fold)
 	for w in Data.WORLDS.size():
+		if w < EARLY_WORLDS and game.hide_early_worlds:
+			continue
 		var world: Dictionary = Data.WORLDS[w]
 		var r := _row(world_icon(w, 3), world["name"])
+		set_model_icon(r["icon"], "world", str(w), "world", 3)
 		var idx := w
 		r["button"].pressed.connect(func(): game.travel(idx))
 		var reset := Button.new()
@@ -895,13 +1016,22 @@ func _build_hotbar() -> void:
 
 ## The hotbar: the 4 shop bombs (locked ones show a padlock) plus any hidden bombs you've found.
 ## Up to 5 per row; a second row appears once you have more than 5.
+## Rebirth bombs get their own column on the left, stacking upwards from just above the tabs.
+var rebirth_box: Control
+
 func rebuild_hotbar() -> void:
 	if hotbar_box and is_instance_valid(hotbar_box):
 		hotbar_box.queue_free()
+	if rebirth_box and is_instance_valid(rebirth_box):
+		rebirth_box.queue_free()
 	hotbar.clear()
 	var ids: Array = []
+	var reborn: Array = []
 	for s in Data.SPECIALS:
-		if (not s.has("find") and not s.has("rebirth")) or game.specials.has(s["id"]):
+		if s.has("rebirth"):
+			if game.specials.has(s["id"]):
+				reborn.append(s["id"])
+		elif not s.has("find") or game.specials.has(s["id"]):
 			ids.append(s["id"])
 	var per_row := 5 if ids.size() <= 10 else 8
 	var cols := mini(per_row, ids.size())
@@ -922,36 +1052,58 @@ func rebuild_hotbar() -> void:
 		move_child(bar, popup_layer.get_index())   # stay under popups
 	hotbar_box = bar
 	for sid in ids:
-		var b := Button.new()
-		b.custom_minimum_size = Vector2(slot_size, slot_size)
-		b.icon_alignment = HORIZONTAL_ALIGNMENT_CENTER
-		b.expand_icon = false
-		b.pressed.connect(func():
-			if game.specials.has(sid):
-				game.fire_special(sid)
-			else:
-				game.sfx.play("error")
-				switch_tab("bombs"))
-		var spin := TextureRect.new()
-		spin.mouse_filter = Control.MOUSE_FILTER_IGNORE
-		var center := CenterContainer.new()
-		center.set_anchors_preset(Control.PRESET_FULL_RECT)
-		center.mouse_filter = Control.MOUSE_FILTER_IGNORE
-		center.add_child(spin)
-		b.add_child(center)
-		var cd := _label("", fs(30), C_TEXT, true)
-		cd.set_anchors_preset(Control.PRESET_FULL_RECT)
-		cd.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
-		cd.vertical_alignment = VERTICAL_ALIGNMENT_CENTER
-		cd.add_theme_constant_override("outline_size", 6)
-		cd.add_theme_color_override("font_outline_color", Color("120e0b"))
-		b.add_child(cd)
-		bar.add_child(b)
-		hotbar[sid] = {"button": b, "label": cd, "spin": spin, "state": ""}
+		bar.add_child(_hotbar_slot(sid, px(80) if per_row == 5 else px(72)))
+	# the rebirth column: first rebirth bomb at the bottom, the rest stacking up
+	var col := VBoxContainer.new()
+	col.add_theme_constant_override("separation", int(px(8)))
+	col.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	var r_size := px(80)
+	var col_h := r_size * reborn.size() + px(8) * maxi(0, reborn.size() - 1)
+	col.position = Vector2(px(12), panel_top - col_h - px(12))
+	col.size = Vector2(r_size, col_h)
+	add_child(col)
+	if popup_layer and is_instance_valid(popup_layer):
+		move_child(col, popup_layer.get_index())
+	rebirth_box = col
+	var stack := reborn.duplicate()
+	stack.reverse()
+	for sid in stack:
+		col.add_child(_hotbar_slot(sid, r_size))
+
+
+func _hotbar_slot(sid: String, slot_size: float) -> Button:
+	var b := Button.new()
+	b.custom_minimum_size = Vector2(slot_size, slot_size)
+	b.icon_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	b.expand_icon = false
+	b.pressed.connect(func():
+		if game.specials.has(sid):
+			game.fire_special(sid)
+		else:
+			game.sfx.play("error")
+			switch_tab("bombs"))
+	var spin := TextureRect.new()
+	spin.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	var center := CenterContainer.new()
+	center.set_anchors_preset(Control.PRESET_FULL_RECT)
+	center.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	center.add_child(spin)
+	b.add_child(center)
+	var cd := _label("", fs(30), C_TEXT, true)
+	cd.set_anchors_preset(Control.PRESET_FULL_RECT)
+	cd.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	cd.vertical_alignment = VERTICAL_ALIGNMENT_CENTER
+	cd.add_theme_constant_override("outline_size", 6)
+	cd.add_theme_color_override("font_outline_color", Color("120e0b"))
+	b.add_child(cd)
+	hotbar[sid] = {"button": b, "label": cd, "spin": spin, "state": ""}
+	return b
 
 
 func _refresh_hotbar() -> void:
 	hotbar_box.visible = not game.specials.is_empty()
+	if rebirth_box and is_instance_valid(rebirth_box):
+		rebirth_box.visible = rebirth_box.get_child_count() > 0
 	for sid in hotbar:
 		var h: Dictionary = hotbar[sid]
 		var b: Button = h["button"]
@@ -980,12 +1132,8 @@ func _refresh_hotbar() -> void:
 					set_model_icon(spin, "bombs", sid, sid, 3)
 				b.modulate = Color.WHITE if state == "ready" else Color(0.55, 0.55, 0.55)
 			h["state"] = state
-		if sid == "overclock" and game.overclocked():
-			cd_label.text = "x2 %d" % int(ceil(game.overclock_left()))
-			cd_label.add_theme_color_override("font_color", C_GOLD)
-		else:
-			cd_label.text = "" if state != "cooling" else str(int(ceil(cd)))
-			cd_label.add_theme_color_override("font_color", C_TEXT)
+		cd_label.text = "" if state != "cooling" else str(int(ceil(cd)))
+		cd_label.add_theme_color_override("font_color", C_TEXT)
 
 
 func _build_toasts() -> void:
@@ -1026,6 +1174,191 @@ func toast_ore(oid: String, n: int) -> void:
 	h.add_child(l)
 	toast_box.add_child(p)
 	toasts[oid] = {"node": p, "label": l, "count": n, "time": 1.8, "dirty": false, "name": ore["name"].to_upper()}
+
+
+# =============================================================================================
+# Notifications: slide in from the right, just under the top bar, then slide away again.
+# They never pause the game. Tap one to close it early (or to do its action, if it has one).
+# =============================================================================================
+
+const NOTE_MAX := 3          # on screen at once; the rest wait their turn
+const NOTE_SLIDE := 0.3      # seconds to slide in / out
+
+func _build_notes() -> void:
+	note_layer = Control.new()
+	note_layer.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	note_layer.size = vp
+	add_child(note_layer)
+
+
+func notify(title: String, body: String, icon_tex: Texture2D = null, spin: Array = [], action := Callable(), secs := 5.0, epic := false) -> void:
+	var w := vp.x * (0.74 if epic else 0.66)
+	var p := PanelContainer.new()
+	p.add_theme_stylebox_override("panel", st["note_epic"] if epic else st["note"])
+	p.custom_minimum_size = Vector2(w, 0)
+	p.mouse_filter = Control.MOUSE_FILTER_STOP
+	var h := HBoxContainer.new()
+	h.add_theme_constant_override("separation", int(px(10)))
+	h.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	p.add_child(h)
+	var icon_w := 0.0
+	if icon_tex:
+		var ic := TextureRect.new()
+		ic.texture = icon_tex
+		ic.stretch_mode = TextureRect.STRETCH_KEEP_CENTERED
+		ic.size_flags_vertical = Control.SIZE_SHRINK_CENTER
+		ic.mouse_filter = Control.MOUSE_FILTER_IGNORE
+		h.add_child(ic)
+		if spin.size() >= 2:
+			set_model_icon(ic, spin[0], spin[1], spin[1], 4 if epic else 3)
+		icon_w = maxf(ic.get_combined_minimum_size().x, px(56))
+	var v := VBoxContainer.new()
+	v.add_theme_constant_override("separation", int(px(2)))
+	v.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	v.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	h.add_child(v)
+	var t := _label(title, fs(36) if epic else fs(26), C_GOLD, true)
+	if epic:
+		t.add_theme_constant_override("outline_size", int(px(8)))
+		t.add_theme_color_override("font_outline_color", Color("5a1e8a"))
+	t.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+	t.custom_minimum_size = Vector2(w - icon_w - px(40), 0)
+	v.add_child(t)
+	if body != "":
+		var b := RichTextLabel.new()
+		b.bbcode_enabled = true
+		b.fit_content = true
+		b.scroll_active = false
+		b.mouse_filter = Control.MOUSE_FILTER_IGNORE
+		b.custom_minimum_size = Vector2(w - icon_w - px(40), 0)
+		b.add_theme_font_size_override("normal_font_size", fs(25) if epic else fs(22))
+		b.add_theme_color_override("default_color", C_TEXT)
+		b.text = body
+		v.add_child(b)
+	var note := {"node": p, "time": secs, "shown": false, "out": false, "epic": epic, "age": 0.0}
+	p.gui_input.connect(func(e: InputEvent):
+		if e is InputEventMouseButton and e.pressed and e.button_index == MOUSE_BUTTON_LEFT:
+			p.accept_event()
+			if note["out"]:
+				return
+			note["out"] = true
+			note["time"] = minf(note["time"], NOTE_SLIDE)
+			game.sfx.play("click")
+			if action.is_valid():
+				action.call())
+	p.position = Vector2(vp.x + px(20), _notes_top())
+	note_layer.add_child(p)
+	notes.append(note)
+
+
+## A quick full-screen flash of colour (fades by itself, never blocks taps).
+func flash(c: Color, secs := 0.6) -> void:
+	if game.reduce_flash:
+		return
+	var r := ColorRect.new()
+	r.color = c
+	r.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	r.size = vp
+	add_child(r)
+	move_child(r, note_layer.get_index())
+	var tw := r.create_tween()
+	tw.tween_property(r, "color:a", 0.0, secs).set_ease(Tween.EASE_OUT)
+	tw.tween_callback(r.queue_free)
+
+
+## A colour wash over the whole screen that you fade in and out yourself (e.g. the red glow
+## while the moon falls). Never blocks taps.
+func screen_tint(c: Color) -> ColorRect:
+	var r := ColorRect.new()
+	r.color = Color(c.r, c.g, c.b, 0.0)
+	r.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	r.size = vp
+	if game.reduce_flash:
+		r.modulate.a = 0.35     # a gentle hint of colour instead
+	add_child(r)
+	move_child(r, note_layer.get_index())
+	return r
+
+
+## Grow Bomb: a big "tap!" readout in the middle of the screen while it charges.
+var charge_box: VBoxContainer
+var charge_title: Label
+var charge_text: RichTextLabel
+
+func show_charge(on: bool) -> void:
+	if charge_box == null:
+		charge_box = VBoxContainer.new()
+		charge_box.mouse_filter = Control.MOUSE_FILTER_IGNORE
+		charge_box.position = Vector2(0, vp.y * 0.3)
+		charge_box.size = Vector2(vp.x, px(120))
+		charge_title = _label("", fs(56), C_GOLD, true)
+		charge_title.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+		charge_title.add_theme_constant_override("outline_size", int(px(12)))
+		charge_title.add_theme_color_override("font_outline_color", Color("120e0b"))
+		charge_box.add_child(charge_title)
+		charge_text = RichTextLabel.new()
+		charge_text.bbcode_enabled = true
+		charge_text.fit_content = true
+		charge_text.scroll_active = false
+		charge_text.mouse_filter = Control.MOUSE_FILTER_IGNORE
+		charge_text.add_theme_font_size_override("normal_font_size", fs(32))
+		charge_text.add_theme_constant_override("outline_size", int(px(8)))
+		charge_text.add_theme_color_override("font_outline_color", Color("120e0b"))
+		charge_box.add_child(charge_text)
+		add_child(charge_box)
+		move_child(charge_box, note_layer.get_index())
+	charge_box.visible = on
+
+
+func set_charge(title: String, body: String) -> void:
+	if charge_box == null:
+		show_charge(true)
+	charge_title.text = title
+	charge_text.text = "[center]%s[/center]" % body
+	charge_title.pivot_offset = Vector2(vp.x * 0.5, fs(56) * 0.5)
+	charge_title.scale = Vector2.ONE * (1.0 + 0.06 * sin(Time.get_ticks_msec() / 70.0))
+
+
+func _notes_top() -> float:
+	return hud_panel.position.y + hud_panel.size.y + px(10)
+
+
+func _update_notes(delta: float) -> void:
+	if game.loading_open:
+		return   # wait until START is pressed
+	var y := _notes_top()
+	var k := 1.0 - exp(-delta * 14.0)
+	var on_screen := 0
+	for n in notes.duplicate():
+		var p: PanelContainer = n["node"]
+		if not is_instance_valid(p):
+			notes.erase(n)
+			continue
+		var sz := p.get_combined_minimum_size()
+		p.size = sz
+		var showing := on_screen < NOTE_MAX
+		if showing:
+			on_screen += 1
+			n["shown"] = true
+			n["time"] -= delta
+			if n["epic"]:
+				# big moments glow and throb, with a little pop as they arrive
+				n["age"] += delta
+				var a: float = n["age"]
+				p.pivot_offset = sz * 0.5
+				p.scale = Vector2.ONE * (1.0 + 0.18 * exp(-a * 5.0) * absf(cos(a * 14.0)))
+				var glow := 0.5 + 0.5 * sin(a * 7.0)
+				p.modulate = Color(1.0 + 0.35 * glow, 1.0 + 0.25 * glow, 1.0 + 0.45 * glow)
+		var leaving: bool = n["time"] <= NOTE_SLIDE
+		var tx := vp.x - px(10) - sz.x if showing and not leaving else vp.x + px(20)
+		p.position.x = lerpf(p.position.x, tx, k)
+		p.position.y = lerpf(p.position.y, y, k) if n["shown"] else y
+		if n["time"] <= 0.0:
+			p.queue_free()
+			notes.erase(n)
+			continue
+		if showing:
+			y += sz.y + px(8)
 
 
 ## Optional performance readout (turn on in settings): frame rate and where the time goes.
@@ -1072,6 +1405,12 @@ func _build_hint() -> void:
 
 func _process(delta: float) -> void:
 	_update_perf(delta)
+	var turn: float = Time.get_ticks_msec() / 1000.0 * TAU / (float(game.ICON_FRAMES) / float(game.ICON_FPS))
+	for f in flippers:
+		if is_instance_valid(f):
+			f.pivot_offset = f.size * 0.5
+			f.scale.x = cos(turn)
+	_update_notes(delta)
 	toast_timer -= delta
 	var update_text := toast_timer <= 0.0
 	if update_text:
@@ -1099,6 +1438,8 @@ func refresh() -> void:
 	if coins_label == null:
 		return
 	coins_label.text = game.fmt(game.coins)
+	rebirth_btn.visible = game.rebirth_ready or game.rebirths > 0
+	rebirth_btn.modulate = Color.WHITE if game.rebirth_ready else Color(0.75, 0.75, 0.75)
 	var w: int = game.current_world
 	world_label.text = Data.WORLDS[w]["name"].to_upper()
 	var main_d: int = game.pillar.depth
@@ -1143,7 +1484,7 @@ func _build_popup_layer() -> void:
 
 ## buttons: [[text, Callable, style("gold"/"green"/"red")], ...]
 ## spin: [folder, id] of a bomb/ore model to show spinning instead of the still icon.
-func show_popup(title: String, body: String, buttons: Array, icon_tex: Texture2D = null, spin: Array = []) -> void:
+func show_popup(title: String, body: String, buttons: Array, icon_tex: Texture2D = null, spin: Array = [], extra: Control = null) -> void:
 	for c in popup_box.get_children():
 		c.queue_free()
 	if icon_tex:
@@ -1166,6 +1507,8 @@ func show_popup(title: String, body: String, buttons: Array, icon_tex: Texture2D
 	b.add_theme_color_override("default_color", C_TEXT)
 	b.text = "[center]%s[/center]" % body
 	popup_box.add_child(b)
+	if extra:
+		popup_box.add_child(extra)
 	# up to 3 buttons sit in a row; more than that go in a 2-wide grid
 	var row: Container
 	if buttons.size() > 3:
@@ -1203,18 +1546,23 @@ func popup_open() -> bool:
 
 func show_settings() -> void:
 	game.sfx.play("click")
-	show_popup("SETTINGS", "Sound, vibration, saves and testing tools.", [
+	show_popup("SETTINGS", "Sound, vibration, flashing, stats, saves and cheats.\n[color=#b9a990]Reduce flashing turns off screen flashes and camera shake.[/color]", [
 		["SOUND: " + ("ON" if game.sound_on else "OFF"), func():
 			game.set_sound(not game.sound_on)
 			show_settings(), "gold"],
 		["VIBRATE: " + ("ON" if game.vibrate_on else "OFF"), func():
 			game.vibrate_on = not game.vibrate_on
 			show_settings(), "gold"],
-		["STATS: " + ("ON" if game.show_stats else "OFF"), func():
+		["REDUCE FLASHING: " + ("ON" if game.reduce_flash else "OFF"), func():
+			game.reduce_flash = not game.reduce_flash
+			game.save_game()
+			show_settings(), "gold"],
+		["FPS: " + ("ON" if game.show_stats else "OFF"), func():
 			game.show_stats = not game.show_stats
 			show_settings(), "gold"],
+		["STATS", func(): show_stats_page(), "gold"],
 		["SAVES", func(): show_saves(), "gold"],
-		["TESTING", func(): show_testing(), "red"],
+		["CHEATS", func(): _cheats_door(), "red"],
 		["CLOSE", Callable(), "green"],
 	], icon("gear", 4))
 
@@ -1245,22 +1593,53 @@ func show_saves() -> void:
 				show_saves()
 				return
 			_confirm("LOAD SLOT %d?" % idx, "Your current game will be replaced by slot %d.\nSave it to another slot first if you want to keep it." % idx, "LOAD", func(): game.load_slot(idx)), "green" if info["exists"] else "gold"])
+	buttons.append(["EXPORT SAVE", func(): _export_save(), "green"])
+	buttons.append(["IMPORT SAVE", func(): _import_save(), "gold"])
 	buttons.append(["NEW GAME", func():
 		_confirm("START OVER?", "Your current game is wiped and you start fresh in Grasslands.\nSave slots are kept.", "START OVER", func(): game.new_game()), "red"])
 	buttons.append(["BACK", func(): show_settings(), "gold"])
 	show_popup("SAVES", lines, buttons, icon("world", 4))
 
 
+## CHEATS need a password (once per time the app is opened).
+const CHEAT_PASSWORD := "NECROPOLIS"
+
+func _cheats_door() -> void:
+	game.sfx.play("click")
+	if game.cheats_unlocked:
+		show_testing()
+		return
+	var box := LineEdit.new()
+	box.placeholder_text = "Password"
+	box.alignment = HORIZONTAL_ALIGNMENT_CENTER
+	box.custom_minimum_size = Vector2(px(380), px(70))
+	box.add_theme_font_size_override("font_size", fs(32))
+	box.secret = true
+	var try := func():
+		if box.text.strip_edges().to_upper() == CHEAT_PASSWORD:
+			game.cheats_unlocked = true
+			game.sfx.play("unlock")
+			show_testing()
+		else:
+			game.sfx.play("error")
+			show_popup("WRONG PASSWORD", "That's not it.", [["TRY AGAIN", func(): _cheats_door(), "gold"], ["BACK", func(): show_settings(), "green"]], icon("lock", 4))
+	box.text_submitted.connect(func(_t): popup_layer.visible = false; try.call())
+	var row := CenterContainer.new()
+	row.add_child(box)
+	show_popup("CHEATS", "Enter the password.", [["BACK", func(): show_settings(), "gold"], ["ENTER", try, "green"]], icon("lock", 4), [], row)
+	box.call_deferred("grab_focus")
+
+
 func show_testing() -> void:
 	game.sfx.play("click")
-	show_popup("TESTING", "Free stuff for testing the game.\nCoins: %s" % game.fmt(game.coins), [
+	show_popup("CHEATS", "Free stuff for testing the game.\nCoins: %s" % game.fmt(game.coins), [
 		["+ COINS", func():
 			game.cheat_coins()
 			show_testing(), "gold"],
 		["+5 UPGRADES", func():
 			game.cheat_upgrades()
 			show_testing(), "gold"],
-		["+%d COSMIC EGGS" % Data.BEDROCK_BOMB_COST, func():
+		["+10 COSMIC EGGS", func():
 			game.cheat_eggs()
 			show_testing(), "gold"],
 		["READY TO REBIRTH", func():
@@ -1268,9 +1647,125 @@ func show_testing() -> void:
 			game.save_game()
 			rebuild_tab()
 			game.show_rebirth_popup(), "gold"],
+		["+1 RELIC", func():
+			for rl in Data.RELICS:
+				if not game.has_relic(rl["id"]):
+					game._open_cache(int(rl["find"]))
+					return
+			show_testing(), "gold"],
+		["SET COINS", func(): _set_coins(), "blue"],
 		["BACK", func(): show_settings(), "green"],
+		["MAX OUT ACCOUNT", func():
+			_confirm("MAX OUT?", "Every upgrade, world, bomb and relic, 20 rebirths, and more coins than you can spend.\nExport your save first if you want to keep it as it is.", "MAX OUT", func(): game.cheat_max_out(), func(): show_testing()), "red"],
 	], icon("coin", 4))
 
 
-func _confirm(title: String, body: String, yes: String, action: Callable) -> void:
-	show_popup(title, body, [["CANCEL", func(): show_saves(), "gold"], [yes, action, "red"]], icon("world", 4))
+## Cheats: type an exact coin amount. Accepts 1500, 2.5M, 3qa, 1e30, 1,000,000.
+func _set_coins() -> void:
+	game.sfx.play("click")
+	var box := LineEdit.new()
+	box.placeholder_text = "e.g. 2.5M or 1e30"
+	box.text = game.fmt(game.coins)
+	box.alignment = HORIZONTAL_ALIGNMENT_CENTER
+	box.custom_minimum_size = Vector2(px(380), px(70))
+	box.add_theme_font_size_override("font_size", fs(32))
+	box.select_all_on_focus = true
+	var apply := func():
+		var v := parse_amount(box.text)
+		if v < 0.0:
+			game.sfx.play("error")
+			show_popup("NOT A NUMBER", "Try something like [color=#ffcf5a]5000[/color], [color=#ffcf5a]2.5M[/color], [color=#ffcf5a]3Qa[/color] or [color=#ffcf5a]1e30[/color].", [["BACK", func(): show_testing(), "gold"], ["TRY AGAIN", func(): _set_coins(), "blue"]], icon("coin", 4))
+			return
+		game.cheat_set_coins(v)
+		show_testing()
+	box.text_submitted.connect(func(_t): popup_layer.visible = false; apply.call())
+	var row := CenterContainer.new()
+	row.add_child(box)
+	var sfx_list := ", ".join(game.SUFFIXES)
+	show_popup("SET COINS", "How many coins?\nSuffixes: [color=#ffcf5a]%s[/color]" % sfx_list, [["BACK", func(): show_testing(), "gold"], ["SET", apply, "blue"]], icon("coin", 4), [], row)
+	box.call_deferred("grab_focus")
+
+
+## Reads "2.5M", "3qa", "1e30", "1,000" etc. Returns -1 if it can't.
+func parse_amount(text: String) -> float:
+	var t := text.strip_edges().replace(",", "").replace(" ", "").replace("_", "")
+	if t.is_empty():
+		return -1.0
+	var mult := 1.0
+	var low := t.to_lower()
+	for i in range(game.SUFFIXES.size() - 1, -1, -1):
+		var suf: String = String(game.SUFFIXES[i]).to_lower()
+		if low.ends_with(suf) and low.length() > suf.length():
+			var num := t.substr(0, t.length() - suf.length())
+			if num.is_valid_float():
+				mult = pow(1000.0, i + 1)
+				t = num
+				break
+	if not t.is_valid_float():
+		return -1.0
+	var v := t.to_float() * mult
+	if is_nan(v) or is_inf(v) or v < 0.0:
+		return -1.0
+	return floorf(v)
+
+
+## Save backup: copies the whole game as a code you can paste somewhere safe (like Notes).
+func _export_save() -> void:
+	var code: String = game.export_save_code()
+	DisplayServer.clipboard_set(code)
+	game.sfx.play("unlock")
+	show_popup("SAVE COPIED",
+		"Your whole game was copied as a save code ([color=#ffcf5a]%s[/color] letters).\n\nPaste it somewhere safe, like the Notes app.\nTo get it back: copy the code, then tap [color=#ffcf5a]IMPORT SAVE[/color]." % game.fmt(float(code.length())),
+		[["OK", func(): show_saves(), "green"]], icon("world", 4))
+
+
+func _import_save() -> void:
+	game.sfx.play("click")
+	var code := DisplayServer.clipboard_get().strip_edges()
+	if not code.begins_with(game.SAVE_CODE_PREFIX):
+		game.sfx.play("error")
+		show_popup("NO SAVE CODE", "Copy your save code first (the whole thing, starting with [color=#ffcf5a]BLASTPILLAR1:[/color]), then tap IMPORT SAVE again.",
+			[["OK", func(): show_saves(), "gold"]], icon("world", 4))
+		return
+	_confirm("IMPORT SAVE?", "Your current game will be replaced by the copied save.\nExport it first if you want to keep it.", "IMPORT", func():
+		var err: String = game.import_save_code(code)
+		if err != "":
+			game.sfx.play("error")
+			show_popup("IMPORT FAILED", err, [["OK", func(): show_saves(), "gold"]], icon("world", 4)))
+
+
+## Lifetime stats (kept through rebirths) and how far this run has got.
+func show_stats_page() -> void:
+	game.sfx.play("click")
+	var st: Dictionary = game.stats
+	var secs := int(float(st.get("time", 0.0)))
+	var played := "%dh %dm" % [secs / 3600, (secs / 60) % 60] if secs >= 3600 else "%dm %ds" % [secs / 60, secs % 60]
+	var n := func(k: String) -> String: return game.fmt(float(st.get(k, 0.0)))
+	var hidden := 0
+	var hidden_total := 0
+	for sp in Data.SPECIALS:
+		if sp.has("find"):
+			hidden_total += 1
+			if game.specials.has(sp["id"]):
+				hidden += 1
+	var lines := "[color=#ffcf5a]ALL TIME[/color]"
+	lines += "\nPlay time: [color=#ffcf5a]%s[/color]" % played
+	lines += "\nRebirths: [color=#ffcf5a]%d[/color]" % game.rebirths
+	lines += "\nBlocks blasted: [color=#ffcf5a]%s[/color]" % n.call("blocks")
+	lines += "\nTaps: [color=#ffcf5a]%s[/color]   Bombs you dropped: [color=#ffcf5a]%s[/color]" % [n.call("taps"), n.call("bombs")]
+	lines += "\nAuto-bomber bombs: [color=#ffcf5a]%s[/color]" % n.call("auto_bombs")
+	lines += "\nSpecial bombs fired: [color=#ffcf5a]%s[/color]" % n.call("specials")
+	lines += "\nCoins earned: [color=#ffcf5a]%s[/color]" % n.call("coins")
+	lines += "\nOres dug up: [color=#ffcf5a]%s[/color]" % n.call("ores")
+	lines += "\nPillars cleared: [color=#ffcf5a]%s[/color]" % n.call("bottoms")
+	lines += "\nBedrock broken: [color=#ffcf5a]%s[/color]   Cosmic Eggs: [color=#ffcf5a]%s[/color]" % [n.call("bedrocks"), n.call("eggs")]
+	lines += "\n\n[color=#ffcf5a]THIS RUN[/color]"
+	lines += "\nWorlds open: [color=#ffcf5a]%d/%d[/color]" % [game.unlocked_worlds, Data.WORLDS.size()]
+	lines += "\nHidden bombs: [color=#ffcf5a]%d/%d[/color]   Relics: [color=#ffcf5a]%d/%d[/color]" % [hidden, hidden_total, game.relics.size(), Data.RELICS.size()]
+	lines += "\nCoins: [color=#ffcf5a]%s[/color]" % game.fmt(game.coins)
+	show_popup("STATS", lines, [["BACK", func(): show_settings(), "gold"]], icon("power", 4))
+
+
+func _confirm(title: String, body: String, yes: String, action: Callable, back := Callable()) -> void:
+	var cancel := back if back.is_valid() else func(): show_saves()
+	show_popup(title, body, [["CANCEL", cancel, "gold"], [yes, action, "red"]], icon("world", 4))

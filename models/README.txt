@@ -24,11 +24,11 @@ BOMBS  ->  put in  models/bombs/
   (fuse sparks come out of the top of the model, so point the fuse up)
 
   Rebirth bombs (unlock for good after this many rebirths):
-  lightning.glb Lightning Bomb   (3 rebirths)
-  anchor.glb    Anchor Bomb      (5 rebirths)
-  overclock.glb Overclock Bomb   (10 rebirths)
-  phantom.glb   Phantom Bomb     (15 rebirths)
-  supernova.glb Supernova Bomb   (20 rebirths)
+  tnt.glb       TNT Bomb         (3 rebirths)
+  gold.glb      Golden Bomb      (5 rebirths, drawn shiny chrome)
+  sushi.glb     Sushi Bomb       (10 rebirths)   + katana.glb = the giant katana it summons (pointing up)
+  grow.glb      Grow Bomb        (15 rebirths)
+  moon.glb      Moon Bomb        (20 rebirths)
 
 RELICS  ->  put in  models/relics/   (found at the bottom of the Worlds 7-11 vaults)
   storm_battery.glb    Storm Battery    (World 7)  every 10th bomb is a Mega blast

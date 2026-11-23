@@ -21,14 +21,14 @@ Missing files show a plain colored cube instead.
 | cluster | Explodes, then throws 6 mini bombs | Rusty orange bomb with smaller bombs/bumps strapped around it |
 | acid | Acid spreads 15 blocks over 3s, dissolving everything | Glass or metal canister of bubbling green acid, drips, warning stripes |
 | mega | Breaks everything nearby, however tough (like acid, 10 blocks reach) | Big dark-red bomb, metal bands/rivets, thick fuse – the scariest one |
-| bedrock | One-time use: shatters a world's bedrock (costs 5 Cosmic Eggs, World 6's treasure) | Heavy dark-grey stone/metal bomb, cracked bedrock texture, glowing seams |
+| bedrock | One-time use: shatters a world's bedrock (costs 1 Cosmic Egg, World 6's treasure) | Heavy dark-grey stone/metal bomb, cracked bedrock texture, glowing seams |
 
 ### Hidden bombs (each found in the bomb cache at the bottom of one world's vault)
 | File | Found in | What it does | Look |
 |---|---|---|---|
 | chain | World 1 vault | Broken blocks keep exploding | Grey bomb wrapped in chain links |
 | freeze | World 2 vault | Makes everything nearby brittle | Icy pale-blue bomb, frost crystals, snowflake |
-| sticky | World 3 vault | Rains 20 slime balls that stick where they land, each a normal bomb | One mini-sized green slime ball (the icon is a pile of them) |
+| sticky | World 3 vault | Rains 20 slime balls that stick where they land, each blasts like a Mega Bomb | One mini-sized green slime ball (the icon is a pile of them) |
 | magnet | World 4 vault | Rips ores out of the rock | Red horseshoe-magnet shaped bomb, silver tips |
 | mirror | World 5 vault | Copies the last special bomb you fired | Black bomb with a white question mark |
 | blackhole | World 6 vault | Swallows a huge sphere | Very dark purple orb, glowing purple ring |
@@ -36,20 +36,27 @@ Missing files show a plain colored cube instead.
 ### Rebirth bombs (unlock for good after enough rebirths)
 | File | Unlocks at | What it does | Look |
 |---|---|---|---|
-| lightning | 3 rebirths | 8 lightning bolts hit the pillar, each boring 10 blocks down | Yellow bomb with a lightning-bolt fin, storm-cloud grey top |
-| anchor | 5 rebirths | Sinks straight down 24 blocks, blasting every 2 | Slate-blue ship anchor with a fuse, barnacles |
-| overclock | 10 rebirths | 10 seconds of instant fuses and double power | Brass clockwork bomb, gears, little dial |
-| phantom | 15 rebirths | Phases 12 blocks into the rock, then a huge blast | Ghostly pale-cyan bomb, see-through look, skull mark |
-| supernova | 20 rebirths | Charges up, then erupts | Bright orange/white star-shaped bomb, glowing core – the biggest one |
+| tnt | 3 rebirths | Lands, hops, hisses and flashes white like Minecraft TNT (3 s), then blows a crater 10 layers deep | A plain TNT block (just a cube, no fuse) |
+| gold | 5 rebirths | Turns 5 layers above and below to gold, then cashes them in (+10% of your coins) | Your gold bomb texture - the game draws it as shiny chrome on top |
+| sushi | 10 rebirths | Summons a giant katana that slices the pillar twice (10 layers each way) | A salmon sushi roll (seaweed, rice, salmon) with the bomb's fuse |
+| katana | (Sushi Bomb) | The giant katana that does the slicing | Model it pointing straight UP (tip at the top), flat side facing the front |
+| grow | 15 rebirths | Lands, then for 10 s every tap makes its blast 1 block bigger (no limit) | Your idea - it swells a little with every tap |
+| moon | 20 rebirths | 2 s of falling whistle, then a moon twice as wide as the pillar smashes the top half | A moon - the game scales it up for the strike |
 
-## Relics (put in `models/relics/`, found at the bottom of the Worlds 7–11 vaults)
-| File | Found in | Bonus | Look |
-|---|---|---|---|
-| storm_battery | World 7 vault | Every 10th bomb is a Mega blast | Battery with a lightning bolt, blue glow |
-| pearl_of_plenty | World 8 vault | Ores worth 2x | Big white pearl in an open shell |
-| clockwork_gear | World 9 vault | Special reloads 20% shorter | Brass gear with a little clock face |
-| gale_lens | World 10 vault | Every bomb reaches 1.25x farther | Swirling wind trapped in a glass lens/monocle, pale cyan |
-| golden_bomb | World 11 vault | Every bomb 1.5x damage | A solid gold bomb |
+## Lightning bolt (`models/bolt.gltf`, editable `bolt.bbmodel`)
+No longer used by the game (the Lightning Bomb was replaced by the TNT Bomb), kept so you can
+reuse it in your own models.
+
+## Relics (`models/relics/`, found at the bottom of the Worlds 7–11 vaults)
+The game paints every relic as shiny metal in one color (set in `data.gd`, "col"), so they can be
+textureless. On a relic with "keep_white", pure-white texture pixels stay white.
+| File | Relic | Found in | Bonus | Painted |
+|---|---|---|---|---|
+| mega | Storm Battery | World 7 vault | Every 20th bomb dropped is a Mega Bomb | shiny red, white "!" marks kept |
+| ore | Pearl of Plenty | World 8 vault | Ores worth 2x | shiny green |
+| clock | Clockwork Gear | World 9 vault | Special reloads 20% shorter | shiny light blue |
+| reach | Gale Lens | World 10 vault | Every bomb reaches 1.25x farther | shiny silver |
+| mega | Golden Trophy | World 11 vault | Every bomb 1.5x damage | shiny gold (same model, texture ignored) |
 
 ## Ores — 10 shared grey shapes (recolored by the game)
 Make each shape ONCE in grey and save it as `models/ores/shapes/<shape>.glb`.
