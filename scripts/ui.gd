@@ -876,7 +876,7 @@ func _ore_cell(oid: String) -> Control:
 	if not seen:
 		return cell
 	if not game.ore_tradable(oid):
-		var note := _label("Bottom of\nWorld 6", fs(20), C_SUB)
+		var note := _label("Dug up in\nevery world", fs(20), C_SUB)
 		note.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
 		h.add_child(note)
 		return cell
